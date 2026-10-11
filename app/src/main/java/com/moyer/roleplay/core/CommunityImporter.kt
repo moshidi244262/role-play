@@ -112,10 +112,13 @@ object CommunityImporter {
             val advanced = listOf("sticky","cooldown","delay").any { e.int(it, ext.int(it)) != 0 } ||
                 e.string("group", ext.string("group")).isNotBlank() || e.bool("vectorized", ext.bool("vectorized")) ||
                 (e.bool("useProbability", ext.bool("useProbability")) && e.int("probability", ext.int("probability", 100)) != 100)
-            val enabled = !e.bool("disable") && e.bool("enabled", true) && position != "unsupported" && !advanced
+            val primary=e.strings(if ("key" in e) "key" else "keys")
+            val secondary=e.strings(if ("keysecondary" in e) "keysecondary" else "secondary_keys")
+            val badRegex=(primary+secondary).any {it.startsWith('/') && runCatching {RegexEngine.compile(it.replace("{{char}}","角色").replace("{{user}}","玩家"))}.isFailure}
+            val enabled = !e.bool("disable") && e.bool("enabled", true) && position != "unsupported" && !advanced && !badRegex
             if (position == "unsupported" || advanced) notes += "$title：高级位置、概率、分组或定时触发未支持，条目暂不启用；原始字段已保留"
-            LoreEntry(name = title, keys = e.strings(if ("key" in e) "key" else "keys"),
-                secondaryKeys = e.strings(if ("keysecondary" in e) "keysecondary" else "secondary_keys"),
+            if(badRegex) notes+="$title：关键词正则包含不支持的语法，条目暂不启用"
+            LoreEntry(name = title, keys = primary, secondaryKeys = secondary,
                 selective = e.bool("selective"), logic = when(e.int("selectiveLogic", ext.int("selectiveLogic"))) {
                     1 -> "not_all"; 2 -> "not_any"; 3 -> "and_all"; else -> "and_any" },
                 constant = e.bool("constant"), enabled = enabled, content = e.string("content"),
@@ -174,7 +177,8 @@ object CommunityImporter {
             val e = value as? JsonObject ?: throw IllegalArgumentException("正则条目格式无效")
             val pattern = e.string("findRegex"); val title = e.string("scriptName", "规则 ${i+1}")
             val placement = (e["placement"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.intOrNull } ?: listOf(2)
-            val supported = runCatching { RegexEngine.compile(pattern) }.isSuccess
+            val substitution=e.int("substituteRegex").coerceIn(0,2)
+            val supported = runCatching { RegexEngine.compileRule(TextRule(pattern=pattern,substituteFind=substitution)) }.isSuccess
             if (!supported) notes += "$title：表达式或标志不兼容，暂不启用；可在测试预览中修改"
             if (placement.any { it !in setOf(1,2,5) }) notes += "$title：命令和推理内容作用域不执行"
             val targets = placement.mapNotNull { when(it) { 1->"user";2->"assistant";5->"lore";else->null } }
@@ -182,7 +186,7 @@ object CommunityImporter {
             TextRule(name=title,pattern=pattern,replacement=e.string("replaceString"),enabled=!e.bool("disabled") && supported && targets.isNotEmpty(),
                 targets=targets,display=md || !prompt,prompt=prompt || !md,
                 minDepth=e.int("minDepth").coerceAtLeast(0),maxDepth=e.int("maxDepth",-1),
-                substituteFind=e.int("substituteRegex").coerceIn(0,2),trims=e.strings("trimStrings"))
+                substituteFind=substitution,trims=e.strings("trimStrings"))
         }
         notes += "正则保留消息原文，只改变显示或发送给模型的文字；不执行 JavaScript、HTML 或斜杠命令"
         return ResourceAsset(kind="regex",name=name.take(200),payload=appJson.encodeToString(RegexRules(rules)),

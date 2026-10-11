@@ -1,7 +1,8 @@
 package com.moyer.roleplay.core
 
 import com.moyer.roleplay.data.TextRule
-import java.util.regex.Pattern
+import com.google.re2j.Pattern
+import com.google.re2j.Matcher
 
 data class RuleResult(val text: String, val warnings: List<String> = emptyList())
 
@@ -10,14 +11,7 @@ object RegexEngine {
     private class Budget {
         var steps = 0
         val deadline = System.nanoTime() + 40_000_000
-        fun check() { if (++steps > 200000 || (steps % 256 == 0 &&
-            (System.nanoTime() > deadline || Thread.currentThread().isInterrupted))) throw Limit() }
-    }
-    private class Guard(val text: String, val budget: Budget) : CharSequence {
-        override val length get() = text.length
-        override fun get(index: Int): Char { budget.check(); return text[index] }
-        override fun subSequence(startIndex: Int, endIndex: Int): CharSequence = Guard(text.substring(startIndex, endIndex), budget)
-        override fun toString() = text
+        fun check() { if (++steps > 200000 || System.nanoTime() > deadline || Thread.currentThread().isInterrupted) throw Limit() }
     }
     data class Compiled(val pattern: Pattern, val global: Boolean)
     fun compile(value: String): Compiled {
@@ -30,14 +24,26 @@ object RegexEngine {
             require(flags.all { it in "gims" } && flags.toSet().size == flags.length) { "目前支持 g、i、m、s 标志；该规则包含不支持的标志" }
         }
         var options = 0
-        if ('i' in flags) options = options or Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        if ('i' in flags) options = options or Pattern.CASE_INSENSITIVE
         if ('m' in flags) options = options or Pattern.MULTILINE
         if ('s' in flags) options = options or Pattern.DOTALL
-        return Compiled(Pattern.compile(source, options), 'g' in flags)
+        val pattern=try {Pattern.compile(source,options)} catch(_: com.google.re2j.PatternSyntaxException) {
+            throw IllegalArgumentException("表达式语法不兼容：请检查前后查找、模式内反向引用或括号")
+        }
+        require(pattern.programSize()<=8192) {"表达式过于复杂，请拆分规则"}
+        return Compiled(pattern, 'g' in flags)
+    }
+
+    fun compileRule(rule: TextRule,charName: String="角色",userName: String="玩家"): Compiled {
+        fun name(value: String)=if(rule.substituteFind==2) Pattern.quote(value) else value
+        val pattern=if(rule.substituteFind==0) rule.pattern else rule.pattern.replace("{{char}}",name(charName)).replace("{{user}}",name(userName))
+        return compile(pattern)
     }
 
     fun matches(pattern: String, text: String): Boolean = try {
-        compile(pattern).pattern.matcher(Guard(text.take(200000), Budget())).find()
+        val budget=Budget()
+        val result=compile(pattern).pattern.matcher(text.take(200000)).find()
+        budget.check();result
     } catch (_: StackOverflowError) { false } catch (_: Exception) { false }
 
     fun apply(text: String, rules: List<TextRule>, target: String, display: Boolean, depth: Int = 0,
@@ -55,9 +61,9 @@ object RegexEngine {
             if (!rule.enabled || target !in rule.targets || (display && !rule.display) || (!display && !rule.prompt) ||
                 depth < rule.minDepth || (rule.maxDepth >= 0 && depth > rule.maxDepth)) continue
             try {
-                val pattern = compile(if (rule.substituteFind == 0) rule.pattern else macros(rule.pattern, rule.substituteFind == 2))
+                val pattern = compileRule(rule,charName,userName)
                 val budget = Budget()
-                val matcher = pattern.pattern.matcher(Guard(result, budget))
+                val matcher = pattern.pattern.matcher(result)
                 val output = StringBuilder(); var previous = 0
                 while (matcher.find()) {
                     budget.check()
@@ -70,6 +76,7 @@ object RegexEngine {
                     if (output.length > 1000000) throw Limit()
                     if (!pattern.global) break
                 }
+                budget.check()
                 output.append(result, previous, result.length)
                 if (output.length > 1000000) throw Limit()
                 result = output.toString()
@@ -80,7 +87,7 @@ object RegexEngine {
         return RuleResult(result, warnings)
     }
 
-    private fun expand(value: String, matcher: java.util.regex.Matcher, original: String, trimmed: String): String = buildString {
+    private fun expand(value: String, matcher: Matcher, original: String, trimmed: String): String = buildString {
         var i = 0
         while (i < value.length) {
             if (value.startsWith("{{match}}", i)) { append(trimmed); i += 9; continue }

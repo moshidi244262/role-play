@@ -66,6 +66,18 @@ class CommunityImportTest {
         assertTrue(rules[0].display);assertFalse(rules[0].prompt);assertFalse(rules[1].enabled);assertFalse(pack.warnings.isEmpty())
     }
 
+    @Test fun macroFindIsValidatedAfterSubstitutionAndUnsupportedLoreRegexIsReported() {
+        val script="""{"scriptName":"宏","findRegex":"/{{char}}/g","replaceString":"{{user}}","placement":[2],"substituteRegex":2}"""
+        val asset=CommunityImporter.decode(script.toByteArray()).resources.single()
+        val rule=appJson.decodeFromString<RegexRules>(asset.payload).rules.single()
+        assertTrue(rule.enabled)
+        assertEquals("玩家",RegexEngine.apply("角色",listOf(rule),"assistant",true,0,"角色","玩家").text)
+        val lore="""{"entries":[{"keys":["/(?=a)/"],"content":"内容"}]}"""
+        val book=CommunityImporter.decode(lore.toByteArray()).resources.single()
+        assertFalse(appJson.decodeFromString<LoreBook>(book.payload).entries.single().enabled)
+        assertTrue(book.notes.contains("正则"))
+    }
+
     private fun text(key: String,value: String)=key.toByteArray()+byteArrayOf(0)+Base64.getEncoder().encode(value.toByteArray())
     private fun png(chunks: List<Pair<String,ByteArray>>): ByteArray {
         val output=ByteArrayOutputStream();output.write(byteArrayOf(-119,80,78,71,13,10,26,10))

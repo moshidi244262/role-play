@@ -293,6 +293,6 @@ private fun RuleEditor(initial: TextRule,onDismiss: ()->Unit,onSave: (TextRule)-
         Text("显示预览（深度 0）：\n${result.text}",style=MaterialTheme.typography.bodySmall)
         result.warnings.forEach {Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
         error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
-        Text("支持 /…/gims 和常见分组替换；不运行脚本或 HTML。超出计算预算会跳过规则。",style=MaterialTheme.typography.bodySmall)
-    }},confirmButton={TextButton(onClick={runCatching {RegexEngine.compile(value.pattern)}.onSuccess {onSave(value)}.onFailure {error="表达式无效，请检查语法与标志"}}) {Text("完成")}},dismissButton={TextButton(onClick=onDismiss) {Text("取消")}})
+        Text("使用 RE2 正则，支持 /…/gims 和常见分组替换。前后查找及模式内反向引用不支持；超出计算预算会保留原文。",style=MaterialTheme.typography.bodySmall)
+    }},confirmButton={TextButton(onClick={runCatching {RegexEngine.compileRule(value)}.onSuccess {onSave(value)}.onFailure {error="表达式无效，请检查语法与标志"}}) {Text("完成")}},dismissButton={TextButton(onClick=onDismiss) {Text("取消")}})
 }

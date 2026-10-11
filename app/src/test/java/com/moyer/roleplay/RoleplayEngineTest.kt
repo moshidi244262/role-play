@@ -62,15 +62,20 @@ class RoleplayEngineTest {
         assertEquals("b-a-ab-$",RegexEngine.apply("ab",listOf(TextRule(pattern="/(a)(b)/",replacement="$2-$1-$&-$$")),"assistant",true).text)
         assertEquals("$1",RegexEngine.apply("[$1]",listOf(TextRule(pattern="/.+/",replacement="{{match}}",trims=listOf("[","]"))),"assistant",true).text)
         assertEquals("玩家",RegexEngine.apply("角色",listOf(TextRule(pattern="/{{char}}/g",replacement="{{user}}",substituteFind=2)),"assistant",true,0,"角色","玩家").text)
-        assertEquals("xaxa",RegexEngine.apply("aa",listOf(TextRule(pattern="/(?=a)/g",replacement="x")),"assistant",true).text)
+        assertEquals("xaax",RegexEngine.apply("aa",listOf(TextRule(pattern="/^|$/g",replacement="x")),"assistant",true).text)
     }
 
-    @Test fun pathologicalRegexReturnsOriginalWithWarning() {
+    @Test fun pathologicalRegexDoesNotBacktrackExponentially() {
         val text="a".repeat(30000)+"!"
         val start=System.nanoTime()
         val result=RegexEngine.apply(text,listOf(TextRule(pattern="/(a+)+$/",replacement="bad")),"assistant",true)
-        assertEquals(text,result.text);assertFalse(result.warnings.isEmpty())
+        assertEquals(text,result.text)
         assertTrue((System.nanoTime()-start)/1000000<2000)
+    }
+
+    @Test fun unsupportedLookaroundIsExplicitlyRejected() {
+        assertThrows(IllegalArgumentException::class.java) {RegexEngine.compile("/(?=a)/g")}
+        assertTrue(RegexEngine.apply("a",listOf(TextRule(pattern="/(?=a)/g")),"assistant",true).warnings.isNotEmpty())
     }
 
     @Test fun disabledRulesDoNotUseTheActiveRuleLimitAndOverflowIsReported() {

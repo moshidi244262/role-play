@@ -4,7 +4,6 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.compose.ui.graphics.asAndroidBitmap
 import android.graphics.Bitmap
 import java.io.File
 import org.junit.Rule
@@ -104,8 +103,10 @@ class UiSmokeTest {
     private fun screenshot(name: String) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val folder = File(context.getExternalFilesDir(null), "screenshots").apply { mkdirs() }
+        val bitmap=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
         File(folder, "$name.png").outputStream().use {
-            compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
+            bitmap.compress(Bitmap.CompressFormat.PNG,100,it)
         }
+        bitmap.recycle()
     }
 }

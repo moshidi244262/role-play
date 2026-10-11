@@ -26,6 +26,10 @@ class PersistenceTest {
             val report=PromptBuilder.compile(repository.dao.session(sessionId)!!,repository.dao.history(sessionId),repository.dao.allResources())
             assertTrue(report.hits.isNotEmpty())
             assertTrue(report.readable().contains("世界书命中"))
+            val text="a".repeat(30000)+"!"
+            val started=System.nanoTime()
+            assertEquals(text,RegexEngine.apply(text,listOf(TextRule(pattern="/(a+)+$/",replacement="bad")),"assistant",true).text)
+            assertTrue((System.nanoTime()-started)/1000000<3000)
             val reply = repository.startTurn(sessionId, "我来找一封信")
             repository.dao.updateMessage(reply.id, "他指向书架", "streaming")
             repository.dao.saveDraft(sessionId, "下次要说的话")
