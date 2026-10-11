@@ -31,6 +31,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
@@ -46,6 +50,7 @@ import com.moyer.roleplay.core.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.serialization.encodeToString
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -85,6 +90,9 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
         val notice by vm.notice.collectAsStateWithLifecycle()
         val pending by vm.pendingImport.collectAsStateWithLifecycle()
         val operationBusy by vm.operationBusy.collectAsStateWithLifecycle()
+        val savedModels by vm.savedModels.collectAsStateWithLifecycle()
+        val modelChoices by vm.modelChoices.collectAsStateWithLifecycle()
+        val connectionFeedback by vm.connectionFeedback.collectAsStateWithLifecycle()
         var tab by rememberSaveable { mutableIntStateOf(0) }
         var editCharacter by remember { mutableStateOf<CharacterCard?>(null) }
         var editConnection by remember { mutableStateOf<ConnectionProfile?>(null) }
@@ -144,6 +152,9 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
                         onExportJson = { exportJson(session.id) }, onExportText = { exportText(session.id) },
                         onConfig = {configTarget=session},
                         onFork = {messageId,edited,regenerate->vm.forkMessage(messageId,edited,regenerate)},onAnswer = {vm.send(null,answerExisting=true)},
+                        savedModels = savedModels, fetchedModels = modelChoices, modelFeedback = connectionFeedback, modelBusy = operationBusy,
+                        onFetchModels = { vm.modelChoices.value = savedModels[it.id].orEmpty(); vm.fetchModels(it, "") },
+                        onModel = { vm.selectModel(session.id, it) },
                         onPreview = { scope.launch { runCatching { vm.promptPreview(session.id) }.onSuccess { preview = it }.onFailure {vm.notice.value="上下文无法组装，请检查会话预算与资料"} } })
                     tab == 0 -> SessionScreen(sessions, vm::openChat, { deleting = it }, { tab = 1 },
                         { importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) })
@@ -268,12 +279,23 @@ private fun SessionScreen(sessions: List<ChatSession>, onOpen: (String) -> Unit,
 @Composable
 private fun CharacterScreen(cards: List<CharacterCard>, onNew: () -> Unit, onImport: ()->Unit, onExport: (CharacterCard)->Unit, onEdit: (CharacterCard) -> Unit,
     onChat: (CharacterCard) -> Unit) {
+    var search by rememberSaveable { mutableStateOf("") }
+    val filtered = remember(cards, search) { searchCharacters(cards, search) }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp).testTag("characters"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { PageHeading("角色", "选择一位角色，开启新的故事") {
             FilledTonalIconButton(onClick = onNew) { Icon(Icons.Outlined.Add, "新建角色") }
         } }
         item { TextButton(onClick=onImport) {Text("导入酒馆角色卡（PNG / JSON）")} }
-        items(cards, key = { it.id }) { card ->
+        item {
+            OutlinedTextField(search, { search = it }, modifier = Modifier.fillMaxWidth().testTag("character-search"),
+                label = { Text("搜索角色名称、描述、性格或场景") }, singleLine = true,
+                leadingIcon = { Icon(Icons.Outlined.Search, null) }, trailingIcon = {
+                    if (search.isNotEmpty()) IconButton(onClick = { search = "" }) { Icon(Icons.Outlined.Close, "清空搜索") }
+                })
+            if (search.isNotBlank()) Text("找到 ${filtered.size} / ${cards.size} 个角色", style = MaterialTheme.typography.bodySmall)
+        }
+        if (filtered.isEmpty() && search.isNotBlank()) item { Text("没有匹配的角色，试试其他关键词。") }
+        items(filtered, key = { it.id }) { card ->
             ElevatedCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(18.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -335,7 +357,7 @@ private fun SettingsScreen(connections: List<ConnectionProfile>, dark: Boolean, 
             HorizontalDivider()
             TextButton(onClick = onBackup) { Text("导出完整备份") }
             TextButton(onClick = onImport) { Text("导入备份 / 聊天记录") }
-            Text("Role Play 0.2.0 · 测试版\n聊天保存在设备本地。生成时，选中的聊天上下文会发送给你配置的 API 服务商。",
+            Text("Role Play 0.3.0 · 测试版\n聊天保存在设备本地。生成时，选中的聊天上下文会发送给你配置的 API 服务商。",
                 color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(vertical = 16.dp))
         }
@@ -344,31 +366,53 @@ private fun SettingsScreen(connections: List<ConnectionProfile>, dark: Boolean, 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, connections: List<ConnectionProfile>,
+internal fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, connections: List<ConnectionProfile>,
     resources: List<ResourceAsset>, draft: String, sending: Boolean, onBack: () -> Unit, onDraft: (String) -> Unit, onSend: (String) -> Unit,
     onStop: () -> Unit, onContinue: () -> Unit, onConnection: (String) -> Unit,
     onExportJson: () -> Unit, onExportText: () -> Unit, onConfig: ()->Unit, onPreview: () -> Unit,
-    onFork: (String,String?,Boolean)->Unit, onAnswer: ()->Unit) {
+    onFork: (String,String?,Boolean)->Unit, onAnswer: ()->Unit,
+    savedModels: Map<String,List<String>>, fetchedModels: List<String>, modelFeedback: String?, modelBusy: Boolean,
+    onFetchModels: (ConnectionProfile)->Unit, onModel: (String)->Unit) {
     var menu by remember { mutableStateOf(false) }
     var choosingConnection by remember { mutableStateOf(false) }
+    var choosingModel by remember(session.id) { mutableStateOf(false) }
+    var refreshedModels by remember { mutableStateOf(false) }
     var selectedMessage by remember(session.id) {mutableStateOf<ChatMessage?>(null)}
     var editingMessage by remember(session.id) {mutableStateOf<ChatMessage?>(null)}
     var editedText by remember {mutableStateOf("")}
     val clipboard=androidx.compose.ui.platform.LocalClipboardManager.current
-    val scroll = rememberLazyListState()
+    val scroll = remember(session.id) { androidx.compose.foundation.lazy.LazyListState() }
+    var followLatest by rememberSaveable(session.id) { mutableStateOf(true) }
+    val scope = rememberCoroutineScope()
+    val currentCount by rememberUpdatedState(messages.size)
+    val readerScroll = remember(session.id) { object : NestedScrollConnection {
+        override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+            if (source == NestedScrollSource.UserInput && available.y > 0f) followLatest = false
+            return Offset.Zero
+        }
+        override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+            if (source == NestedScrollSource.UserInput && consumed.y < 0f && !scroll.canScrollForward) followLatest = true
+            return Offset.Zero
+        }
+    } }
     val config=remember(session.config) {readConfig(session.config)}
+    val userName=playerIdentity(session,config)
+    val activeConnection=connections.firstOrNull {it.id==session.connectionId}
+    val activeModel=activeConnection?.let {sessionProfile(it,config).model}.orEmpty()
     val characterName=remember(session.characterSnapshot) {appJson.decodeFromString<CharacterCard>(session.characterSnapshot).name}
     val rules=remember(config,resources) {PromptBuilder.rules(config,resources)}
-    val nearBottom by remember { derivedStateOf { !scroll.canScrollForward ||
-        (scroll.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= messages.lastIndex - 1 } }
-    LaunchedEffect(messages.size, messages.lastOrNull()?.content) {
-        if (messages.isNotEmpty() && nearBottom) scroll.scrollToItem(messages.lastIndex)
+    LaunchedEffect(session.id, messages.size, messages.lastOrNull()?.content, followLatest) {
+        if (messages.isNotEmpty() && followLatest && !scroll.isScrollInProgress) scroll.scrollToItem(messages.size)
+    }
+    LaunchedEffect(session.id) {
+        snapshotFlow { followLatest && !scroll.isScrollInProgress && scroll.canScrollForward }
+            .distinctUntilChanged().collect { shouldFollow -> if (shouldFollow) scroll.scrollToItem(currentCount) }
     }
     Column(Modifier.fillMaxSize().imePadding()) {
         TopAppBar(title = {
             Column {
                 Text(session.title, maxLines = 1)
-                Text(connections.firstOrNull { it.id == session.connectionId }?.name ?: "尚未选择 API",
+                Text(activeConnection?.let { "${it.name} · $activeModel" } ?: "尚未选择 API",
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回") } },
@@ -377,6 +421,7 @@ private fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, connec
                     IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "会话菜单") }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         DropdownMenuItem(text = { Text("选择 API 连接") }, onClick = { menu = false; choosingConnection = true }, enabled = !sending)
+                        DropdownMenuItem(text = { Text("切换当前会话模型") }, onClick = { menu = false; refreshedModels = false; choosingModel = true }, enabled = !sending && activeConnection != null)
                         DropdownMenuItem(text = { Text("会话设定：资料与玩家身份") }, onClick = {menu=false;onConfig()},enabled=!sending)
                         DropdownMenuItem(text = { Text("导出可恢复记录（JSON）") }, onClick = { menu = false; onExportJson() })
                         DropdownMenuItem(text = { Text("导出阅读文本（TXT）") }, onClick = { menu = false; onExportText() })
@@ -384,24 +429,24 @@ private fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, connec
                     }
                 }
             })
-        LazyColumn(state = scroll, modifier = Modifier.weight(1f).fillMaxWidth(),
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+        LazyColumn(state = scroll, modifier = Modifier.fillMaxSize().nestedScroll(readerScroll).testTag("chat-messages"),
             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             items(messages, key = { it.id }) { message ->
                 val user = message.role == "user"
                 val depth=messages.lastIndex-messages.indexOf(message)
-                val shown by produceState(initialValue=message.content,message.content,rules,depth,session.playerName) {
-                    value=withContext(Dispatchers.Default) {RegexEngine.apply(message.content,rules,message.role,true,depth,characterName,session.playerName).text}
+                val shown by produceState(initialValue="",message.content,rules,depth,userName) {
+                    value=withContext(Dispatchers.Default) {RegexEngine.apply(message.content,rules,message.role,true,depth,characterName,userName).text}
                 }
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = if (user) Alignment.End else Alignment.Start) {
                     Row(verticalAlignment=Alignment.CenterVertically) {
-                        Text(if (user) session.playerName else session.title, style = MaterialTheme.typography.labelSmall,
+                        Text(if (user) userName else session.title, style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 5.dp, start = 4.dp, end = 4.dp))
                         IconButton(onClick={selectedMessage=message},modifier=Modifier.size(28.dp),enabled=!sending) {Icon(Icons.Outlined.MoreHoriz,"消息操作 ${message.position}",modifier=Modifier.size(16.dp))}
                     }
                     Surface(shape = RoundedCornerShape(18.dp), color = if (user) MaterialTheme.colorScheme.primaryContainer
                         else MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.widthIn(max = 680.dp)) {
-                        SelectionContainer { Text(shown.ifEmpty { if (message.status == "streaming") "正在回应…" else if(message.content.isNotEmpty()) "（内容已被显示规则隐藏）" else "未收到文字" },
-                            modifier = Modifier.padding(16.dp), lineHeight = 25.sp) }
+                        MessageContent(shown.ifEmpty { if (message.status == "streaming") "正在回应…" else if(message.content.isNotEmpty()) "（内容已被显示规则隐藏）" else "未收到文字" }, message.id)
                     }
                     if (message.status != "complete") Text(when (message.status) {
                         "streaming" -> "生成中 · 已收到的文字会自动保存"
@@ -413,6 +458,11 @@ private fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, connec
                         (message.cachedTokens?.let {" · 缓存命中 $it"} ?: ""),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+            item(key = "latest-edge") { Spacer(Modifier.height(1.dp)) }
+        }
+        if (!followLatest) FilledTonalButton(onClick = {
+            followLatest = true; scope.launch { scroll.scrollToItem(messages.size) }
+        }, modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp).testTag("back-to-latest")) { Text("回到最新") }
         }
         if (!sending && messages.isNotEmpty()) Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp), horizontalArrangement = Arrangement.End) {
             if(messages.last().role=="user") TextButton(onClick=onAnswer) {Text("生成回复")}
@@ -422,7 +472,7 @@ private fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, connec
             OutlinedTextField(value = draft, onValueChange = onDraft, enabled = !sending, modifier = Modifier.weight(1f),
                 placeholder = { Text("说些什么，或描述你的行动…") }, maxLines = 6, shape = RoundedCornerShape(24.dp))
             Spacer(Modifier.width(8.dp))
-            FilledIconButton(onClick = { if (sending) onStop() else onSend(draft) },
+            FilledIconButton(onClick = { if (sending) onStop() else { followLatest = true; onSend(draft) } },
                 enabled = sending || draft.isNotBlank(), modifier = Modifier.size(52.dp)) {
                 Icon(if (sending) Icons.Outlined.Stop else Icons.AutoMirrored.Outlined.Send, if (sending) "停止生成" else "发送")
             }
@@ -453,6 +503,11 @@ private fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, connec
                 }
             }
         }, confirmButton = { TextButton(onClick = { choosingConnection = false }) { Text("关闭") } })
+    if (choosingModel && activeConnection != null) ModelPicker(activeModel,
+        (if (refreshedModels) fetchedModels else savedModels[activeConnection.id].orEmpty()) + listOf(activeConnection.model) +
+            (if(activeConnection.provider=="DeepSeek") listOf("deepseek-flash","deepseek-v4-pro") else emptyList()),
+        modelBusy, if (refreshedModels) modelFeedback else null,
+        { refreshedModels = true; onFetchModels(activeConnection) }, { onModel(it); choosingModel = false }, { choosingModel = false })
 }
 
 @Composable
@@ -504,12 +559,13 @@ private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDi
     var version by remember(initial.id) { mutableStateOf(initial.versionHeader) }
     var advanced by remember { mutableStateOf(false) }
     var costConfirmation by remember { mutableStateOf(false) }
+    var modelPicker by remember { mutableStateOf(false) }
     val choices by vm.modelChoices.collectAsStateWithLifecycle()
     val feedback by vm.connectionFeedback.collectAsStateWithLifecycle()
     val busy by vm.operationBusy.collectAsStateWithLifecycle()
     fun profile() = initial.copy(name = name, provider = provider, baseUrl = url, protocol = protocol,
         model = model, maxOutputTokens = output.toIntOrNull() ?: 0, versionHeader = version)
-    LaunchedEffect(initial.id) { vm.modelChoices.value = emptyList(); vm.connectionFeedback.value = null }
+    LaunchedEffect(initial.id) { vm.modelChoices.value = vm.savedModels.value[initial.id].orEmpty(); vm.connectionFeedback.value = null }
     LaunchedEffect(choices) { if (model.isBlank() && choices.isNotEmpty()) model = choices.first() }
     AlertDialog(onDismissRequest = { if (!busy) onDismiss() }, title = { Text("API 连接") }, text = {
         Column(Modifier.heightIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -524,22 +580,26 @@ private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDi
                     }, label = { Text(template.provider) }) }
             }
             EditorField("连接名称", name, { name = it }, true)
-            OutlinedTextField(value = key, onValueChange = { key = it }, label = { Text("API 密钥") }, singleLine = true,
+            OutlinedTextField(value = key, onValueChange = { key = it; vm.modelChoices.value = emptyList() }, label = { Text("API 密钥") }, singleLine = true,
                 visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(),
                 supportingText = { Text("编辑已有连接时，留空保留原密钥。密钥不会写入备份。") })
-            EditorField("服务地址（Base URL）", url, { url = it }, true)
+            EditorField("服务地址（Base URL）", url, { url = it; vm.modelChoices.value = emptyList(); vm.connectionFeedback.value = null }, true)
             EditorField("模型 ID", model, { model = it }, true)
             TextButton(enabled = !busy, onClick = { vm.fetchModels(profile(), key) }) { Text(if (busy) "正在连接…" else "获取模型列表") }
             Text("模型列表不可用时也能先保存连接，再手动填写模型 ID。", style = MaterialTheme.typography.bodySmall)
-            if (choices.isNotEmpty()) Column(Modifier.heightIn(max = 180.dp).verticalScroll(rememberScrollState())) {
-                choices.forEach { id -> TextButton(onClick = { model = id }) { Text(id) } }
+            OutlinedButton(onClick={modelPicker=true},enabled=!busy,modifier=Modifier.fillMaxWidth()) {Text("选择模型（${choices.size} 个已获取）")}
+            if(provider=="DeepSeek") {
+                Text("官方常用模型（仍需账户权限）",style=MaterialTheme.typography.labelSmall)
+                FlowRow { listOf("deepseek-flash", "deepseek-v4-pro").forEach { id ->
+                    FilterChip(selected=model==id,onClick={model=id},label={Text(id)})
+                } }
             }
             TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "收起高级选项" else "高级选项") }
             if (advanced) {
                 Text("API 协议", style = MaterialTheme.typography.labelLarge)
                 Protocol.entries.forEach { choice ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = protocol == choice, onClick = { protocol = choice })
+                        RadioButton(selected = protocol == choice, onClick = { protocol = choice; vm.modelChoices.value = emptyList() })
                         Text(when (choice) { Protocol.CHAT_COMPLETIONS -> "Chat Completions"; Protocol.RESPONSES -> "Responses"; Protocol.ANTHROPIC_MESSAGES -> "Claude Messages" })
                     }
                 }
@@ -558,4 +618,6 @@ private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDi
         text = { Text("将向所选 API 发送一条简短测试消息，会产生少量 API 用量。") },
         confirmButton = { TextButton(onClick = { costConfirmation = false; vm.testConnection(profile(), key) }) { Text("测试") } },
         dismissButton = { TextButton(onClick = { costConfirmation = false }) { Text("取消") } })
+    if(modelPicker) ModelPicker(model,choices,busy,feedback,{vm.fetchModels(profile(),key)},
+        {model=it;modelPicker=false},{modelPicker=false})
 }

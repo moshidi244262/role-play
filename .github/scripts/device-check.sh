@@ -6,7 +6,7 @@ set -uo pipefail
 gradle connectedDebugAndroidTest --stacktrace -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
 test_status=$?
 
-if ! adb pull /sdcard/Android/data/com.moyer.roleplay/files/screenshots app/build/ui-screenshots; then
+if ! adb pull /sdcard/Android/data/com.moyer.roleplay.next/files/screenshots app/build/ui-screenshots; then
     if [ "$test_status" -eq 0 ]; then test_status=1; fi
 fi
 adb logcat -d > app/build/device-logcat.txt

@@ -82,7 +82,7 @@ class ApiClientTest {
         val session = ChatSession(title = "测试", characterId = card.id,
             characterSnapshot = com.moyer.roleplay.core.appJson.encodeToJsonElement(card).toString())
         val result = com.moyer.roleplay.core.PromptBuilder.build(session, emptyList()).joinToString("\n") {it.content}
-        assertTrue(result.contains("旧角色 对 玩家 说话"))
+        assertTrue(result.contains("旧角色 对 我 说话"))
     }
 
     @Test fun stoppingGenerationCancelsBlockedHttpRead() = runBlocking {
@@ -126,5 +126,28 @@ class ApiClientTest {
             """{"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":0,"cache_read_input_tokens":50}}}"""))
         assertEquals(listOf(ApiEvent.Usage(output=20)),ApiWire.parse(Protocol.ANTHROPIC_MESSAGES,
             """{"type":"message_delta","usage":{"output_tokens":20}}"""))
+    }
+
+    @Test fun claudeModelDiscoveryFetchesAllPagesWithCorrectAuthentication() = runBlocking {
+        val server=MockWebServer();server.start()
+        try {
+            val claude=ProviderTemplates.all[2].copy(baseUrl=server.url("/v1").toString())
+            server.enqueue(MockResponse().setBody("""{"data":[{"id":"claude-sonnet-example"}],"has_more":true,"last_id":"claude-sonnet-example"}"""))
+            server.enqueue(MockResponse().setBody("""{"data":[{"id":"claude-opus-example"},{"id":"old-retired","lifecycle":"retired"}],"has_more":false}"""))
+            assertEquals(listOf("claude-opus-example","claude-sonnet-example"),ApiClient(true).models(claude,"fake-test-key"))
+            val first=server.takeRequest();assertEquals("/v1/models",first.path)
+            assertEquals("fake-test-key",first.getHeader("x-api-key"))
+            assertEquals("2023-06-01",first.getHeader("anthropic-version"))
+            assertEquals("/v1/models?after_id=claude-sonnet-example",server.takeRequest().path)
+        } finally {server.shutdown()}
+    }
+
+    @Test fun brokenModelPaginationDoesNotLoopOrReturnPartialSuccess() = runBlocking {
+        val server=MockWebServer();server.start()
+        try {
+            repeat(2) {server.enqueue(MockResponse().setBody("""{"data":[{"id":"a"}],"has_more":true,"last_id":"a"}"""))}
+            val failure=runCatching {ApiClient(true).models(profile.copy(baseUrl=server.url("/v1").toString()),"fake-test-key")}.exceptionOrNull()
+            assertTrue(failure is ApiFailure);assertEquals(2,server.requestCount)
+        } finally {server.shutdown()}
     }
 }

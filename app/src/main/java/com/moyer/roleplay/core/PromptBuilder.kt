@@ -16,6 +16,12 @@ data class PromptReport(val messages: List<PromptMessage>, val hits: List<String
 
 fun estimateTokens(text: String): Int = kotlin.math.ceil(text.sumOf { if (it.code < 128) 0.25 else 1.5 }).toInt()
 
+fun playerIdentity(session: ChatSession, config: RoleplayConfig = readConfig(session.config)): String =
+    config.playerName.ifBlank { session.playerName.takeUnless { it.isBlank() || it == "玩家" } ?: "我" }
+
+fun sessionProfile(profile: ConnectionProfile, config: RoleplayConfig): ConnectionProfile =
+    profile.copy(model = config.modelOverride.ifBlank { profile.model })
+
 object PromptBuilder {
     fun rules(config: RoleplayConfig, assets: List<ResourceAsset>): List<TextRule> = config.regexIds.mapNotNull { id ->
         assets.firstOrNull { it.id == id && it.enabled && it.kind == "regex" }
@@ -26,7 +32,7 @@ object PromptBuilder {
     fun compile(session: ChatSession, history: List<ChatMessage>, assets: List<ResourceAsset> = emptyList()): PromptReport {
         val card = appJson.decodeFromString<CharacterCard>(session.characterSnapshot)
         val config = readConfig(session.config)
-        val user = config.playerName.ifBlank { session.playerName }
+        val user = playerIdentity(session, config)
         val rules = rules(config, assets)
         val warnings = mutableListOf<String>()
         if(rules.size>32) warnings+="已绑定超过 32 条启用正则，仅执行前 32 条"
@@ -45,7 +51,12 @@ object PromptBuilder {
         }.flatMap { appJson.decodeFromString<StylePreset>(it.payload).blocks.filter { block -> block.enabled && block.content.isNotBlank() } }
         val lore = selectLore(config, assets, valid, card.name, user) { text -> transform(macros(text), "lore", 0) }
         warnings += lore.warnings
-        val identity = "你正在进行虚构故事中的角色扮演。角色身份、性格和背景以角色卡为准。风格预设用于写法，不改变角色身份。世界书补充背景；若矛盾，优先保持角色卡中的人物事实。玩家身份是 $user。不要替玩家决定行动或发言。"
+        val view = when (config.narrativeView) {
+            "first" -> "用户所扮演人物的自述、视角和状态栏使用第一人称‘我’；其他人物的称呼仍按人物关系处理。"
+            "third" -> "叙述用户所扮演人物时采用第三人称，优先使用人物的实际姓名与设定称谓。人物直接发言中的第一人称仍为‘我’。"
+            else -> "叙述视角遵循角色卡、示例对话和当前情境。用户所扮演人物以第一人称自述时称‘我’，不要机械地称自己为‘玩家’。"
+        }
+        val identity = "你正在进行虚构故事中的角色扮演。角色身份、性格和背景以角色卡为准。风格预设用于写法，不改变角色身份。世界书补充背景；若矛盾，优先保持角色卡中的人物事实。用户在故事中的身份称谓是 $user。‘玩家’是应用中的身份标签，不是默认人物姓名，也不是第一人称代词。$view 不要替用户决定行动或发言。"
         val core = buildString {
             appendLine("角色：${card.name}")
             if(card.description.isNotBlank()) appendLine("角色描述：${macros(card.description)}")

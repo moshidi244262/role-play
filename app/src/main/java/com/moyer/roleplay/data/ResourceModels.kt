@@ -20,7 +20,8 @@ data class RoleplayConfig(
     val lorebookIds: List<String> = emptyList(), val presetId: String? = null,
     val regexIds: List<String> = emptyList(), val characterPromptId: String? = null, val playerName: String = "",
     val persona: String = "", val memory: String = "", val authorNote: String = "", val authorDepth: Int = 2,
-    val scanDepth: Int = 4, val loreBudget: Int = 2048, val historyBudgetChars: Int = 48000
+    val scanDepth: Int = 4, val loreBudget: Int = 2048, val historyBudgetChars: Int = 48000,
+    val narrativeView: String = "auto", val modelOverride: String = ""
 ) {
     fun references() = (lorebookIds + regexIds + listOfNotNull(presetId, characterPromptId)).toSet()
     fun remap(ids: Map<String, String>) = copy(lorebookIds = lorebookIds.mapNotNull { ids[it] },
@@ -28,6 +29,7 @@ data class RoleplayConfig(
     fun without(id: String) = copy(lorebookIds = lorebookIds.filter { it != id },
         presetId = presetId?.takeUnless { it == id }, characterPromptId = characterPromptId?.takeUnless { it == id }, regexIds = regexIds.filter { it != id })
     fun validate() {
+        require(narrativeView in setOf("auto", "first", "third") && modelOverride.length <= 200) { "叙述视角或模型 ID 无效" }
         require(lorebookIds.size <= 64 && regexIds.size <= 32 && playerName.length <= 100) { "绑定资料或玩家名称超出限制" }
         require(scanDepth in 0..100 && loreBudget in 0..16384 && authorDepth in 0..100 &&
             historyBudgetChars in 2000..200000) { "会话预算或扫描深度无效" }
@@ -101,6 +103,7 @@ fun configDefaults(defaults: RoleplayConfig, card: RoleplayConfig): RoleplayConf
     lorebookIds = (defaults.lorebookIds + card.lorebookIds).distinct(),
     regexIds = (defaults.regexIds + card.regexIds).distinct(), presetId = card.presetId ?: defaults.presetId,
     playerName = card.playerName.ifBlank { defaults.playerName }, persona = card.persona.ifBlank { defaults.persona },
+    narrativeView = if(card.narrativeView == "auto") defaults.narrativeView else card.narrativeView,
     memory=card.memory.ifBlank {defaults.memory},authorNote=card.authorNote.ifBlank { defaults.authorNote },authorDepth=if(card.authorDepth==2) defaults.authorDepth else card.authorDepth,
     scanDepth=if(card.scanDepth==4) defaults.scanDepth else card.scanDepth,loreBudget=if(card.loreBudget==2048) defaults.loreBudget else card.loreBudget,
     historyBudgetChars=if(card.historyBudgetChars==48000) defaults.historyBudgetChars else card.historyBudgetChars

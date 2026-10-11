@@ -89,6 +89,8 @@ class UiSmokeTest {
         compose.onNodeWithText("导入副本").performClick()
         compose.waitUntil(15000) {vm.pendingImport.value==null && !vm.operationBusy.value}
         compose.onNodeWithText("角色").performClick()
+        compose.onNodeWithTag("characters").performScrollToNode(hasTestTag("character-search"))
+        compose.onNodeWithTag("character-search").performTextInput("导入验证角色")
         compose.waitUntil(15000) {compose.onAllNodesWithText("导入验证角色").fetchSemanticsNodes().isNotEmpty()}
         compose.onNodeWithTag("characters").performScrollToNode(hasContentDescription("开始与导入验证角色的新会话"))
         compose.onNodeWithContentDescription("开始与导入验证角色的新会话").performClick()

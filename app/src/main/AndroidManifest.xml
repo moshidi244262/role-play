@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <application android:name=".RolePlayApplication" android:allowBackup="false"
-        android:label="Role Play" android:icon="@drawable/ic_launcher"
+        android:label="Role Play 新版" android:icon="@drawable/ic_launcher"
         android:theme="@style/Theme.RolePlay" android:supportsRtl="true"
         android:usesCleartextTraffic="false">
         <activity android:name=".MainActivity" android:exported="true"

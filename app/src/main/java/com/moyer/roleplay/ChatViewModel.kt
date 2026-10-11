@@ -42,6 +42,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val pendingImport = MutableStateFlow<ImportPreview?>(null)
     val operationBusy = MutableStateFlow(false)
     val modelChoices = MutableStateFlow<List<String>>(emptyList())
+    val savedModels = MutableStateFlow(runCatching {
+        appJson.decodeFromString<Map<String, List<String>>>(preferences.getString("model_lists", "{}") ?: "{}")
+    }.getOrDefault(emptyMap()))
     val connectionFeedback = MutableStateFlow<String?>(null)
     val darkMode = MutableStateFlow(preferences.getBoolean("dark", false))
     val drafts = MutableStateFlow<Map<String, String>>(emptyMap())
@@ -84,6 +87,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveConnection(profile: ConnectionProfile, newKey: String, onSaved: () -> Unit) = viewModelScope.launch {
         try {
+            val previous = dao.connection(profile.id)
+            if (previous != null && !sameCredentialTarget(previous, profile)) cacheModels(profile.id, emptyList())
             ApiWire.endpoint(profile, "models").also { require(it.isHttps) { "服务地址必须使用 HTTPS" } }
             require(profile.name.isNotBlank()) { "请填写连接名称" }
             require(profile.maxOutputTokens in 1..65536) { "输出上限须在 1～65536 之间" }
@@ -108,10 +113,25 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         try {
             val key = resolveKey(profile, newKey)
             modelChoices.value = api.models(profile, key.trim())
+            val existing = dao.connection(profile.id)
+            if (existing == null || sameCredentialTarget(existing, profile)) cacheModels(profile.id, modelChoices.value)
             connectionFeedback.value = if (modelChoices.value.isEmpty()) "该接口未返回模型列表，可以手动填写模型 ID" else "已获取 ${modelChoices.value.size} 个模型，点击名称选择"
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) { connectionFeedback.value = safeError(e) }
         finally { operationBusy.value = false }
+    }
+
+    private fun cacheModels(id: String, models: List<String>) {
+        savedModels.value = savedModels.value + (id to models)
+        preferences.edit().putString("model_lists", appJson.encodeToString(savedModels.value)).apply()
+    }
+
+    fun selectModel(sessionId: String, model: String) = viewModelScope.launch {
+        if (!sending.value) safe {
+            require(model.isNotBlank() && model.length <= 200) { "模型 ID 无效" }
+            val session = requireNotNull(dao.session(sessionId))
+            dao.saveConfig(session.id, readConfig(session.config).copy(modelOverride = model).json(), session.playerName)
+        }
     }
 
     fun testConnection(profile: ConnectionProfile, newKey: String) = viewModelScope.launch {
@@ -135,7 +155,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun bindConnection(id: String, connectionId: String) = viewModelScope.launch {
-        if (!sending.value) safe { dao.bindConnection(id, connectionId) }
+        if (!sending.value) safe { mutations.withLock {
+            val session = requireNotNull(dao.session(id))
+            dao.bindConnection(id, connectionId)
+            dao.saveConfig(id, readConfig(session.config).copy(modelOverride = "").json(), session.playerName)
+        } }
     }
 
     fun send(text: String?, continueStory: Boolean = false, answerExisting: Boolean = false) {
@@ -149,7 +173,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             var inputTokens: Int? = null; var outputTokens: Int? = null; var cachedTokens: Int? = null
             try {
                 val session = requireNotNull(dao.session(id)) { "会话不存在" }
-                val profile = session.connectionId?.let { dao.connection(it) }
+                val profile = session.connectionId?.let { dao.connection(it) }?.let { sessionProfile(it, readConfig(session.config)) }
                     ?: throw IllegalArgumentException("请先在设置中添加 API 连接，再为本会话选择连接")
                 val key = withContext(Dispatchers.IO) { app.secrets.get(profile.id) }
                     ?: throw IllegalArgumentException("请在设置中为该连接填写 API 密钥")
@@ -290,7 +314,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val session = requireNotNull(dao.session(id))
         val history=dao.history(id); val assets=dao.allResources()
         val report=withContext(Dispatchers.Default) { PromptBuilder.compile(session,history,assets) }
-        val profile=session.connectionId?.let { dao.connection(it) }
+        val profile=session.connectionId?.let { dao.connection(it) }?.let { sessionProfile(it, readConfig(session.config)) }
         return report.readable() + if(profile?.protocol==Protocol.ANTHROPIC_MESSAGES)
             "\nClaude Messages 会将所有 system 提示合并到独立 system 字段；system 深度位置会转换为全局提示。\n\n实际请求正文（不含密钥）：\n${ApiWire.body(profile,report.messages)}" else ""
     }
@@ -309,7 +333,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             config.validate()
             mutations.withLock {
                 if(sessionId==null) dao.saveSetting(StoredSetting("defaults",config.json()))
-                else dao.saveConfig(sessionId,config.json(),config.playerName.ifBlank { "玩家" })
+                else dao.saveConfig(sessionId,config.json(),config.playerName.ifBlank { "我" })
             }
             onSaved(); notice.value=if(sessionId==null) "新会话默认资料已保存" else "会话设定已保存"
         }

@@ -31,7 +31,7 @@ class ChatRepository(val database: AppDatabase) {
         val config = configDefaults(readConfig(dao.setting("defaults")?.value ?: "{}"), readConfig(card.config))
         val session = ChatSession(title = card.name, characterId = card.id,
             characterSnapshot = appJson.encodeToString(card), connectionId = connectionId, config=config.json(),
-            playerName=config.playerName.ifBlank { "玩家" })
+            playerName=config.playerName.ifBlank { "我" })
         dao.insertSession(session)
         val first=greeting ?: card.greeting
         if (first.isNotBlank()) dao.insertMessage(ChatMessage(sessionId = session.id,

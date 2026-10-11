@@ -194,15 +194,38 @@ class ApiClient(private val allowInsecureLocalhost: Boolean = false) {
     }.flowOn(Dispatchers.IO)
 
     suspend fun models(profile: ConnectionProfile, key: String): List<String> = withContext(Dispatchers.IO) {
-        val modelClient = client.newBuilder().callTimeout(20, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()
-        modelClient.newCall(request(profile, key, "models").get().build()).execute().use {
-            if (!it.isSuccessful) throw ApiFailure(ApiWire.httpError(it.code))
-            val body = it.body?.string() ?: throw ApiFailure("服务商返回空模型列表")
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
+        val result = linkedSetOf<String>()
+        val cursors = mutableSetOf<String>()
+        var cursor: String? = null
+        for (page in 0 until 20) {
+            currentCoroutineContext().ensureActive()
+            val timeout = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
+            if (timeout <= 0) throw ApiFailure("模型列表获取超时，可以重试或手动填写模型 ID")
+            val builder = request(profile, key, "models")
+            var url = builder.build().url
+            if (cursor != null) url = url.newBuilder().addQueryParameter("after_id", cursor).build()
+            val modelClient = client.newBuilder().callTimeout(timeout, TimeUnit.MILLISECONDS).readTimeout(timeout, TimeUnit.MILLISECONDS).build()
+            val root = modelClient.newCall(builder.url(url).get().build()).execute().use {
+                if (!it.isSuccessful) throw ApiFailure(ApiWire.httpError(it.code))
+                val body = it.body?.string() ?: throw ApiFailure("服务商返回空模型列表")
+                try { appJson.parseToJsonElement(body).jsonObject }
+                catch (_: Exception) { throw ApiFailure("服务商返回的模型列表格式不兼容，可以手动填写模型 ID") }
+            }
             try {
-                val root = appJson.parseToJsonElement(body).jsonObject
-                root["data"]?.jsonArray?.mapNotNull { row -> row.jsonObject["id"]?.jsonPrimitive?.contentOrNull }
-                    ?.filter { id -> id.isNotBlank() }?.distinct()?.sorted() ?: emptyList()
-            } catch (_: Exception) { throw ApiFailure("服务商返回的模型列表格式不兼容，可以手动填写模型 ID") }
+                val data = root["data"]?.jsonArray ?: throw IllegalArgumentException()
+                data.forEach { row ->
+                    val item = row.jsonObject
+                    if (item["lifecycle"]?.jsonPrimitive?.contentOrNull != "retired") {
+                        item["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() && it.length <= 200 }?.let { result += it }
+                    }
+                }
+                if (root["has_more"]?.jsonPrimitive?.booleanOrNull != true) return@withContext result.sorted()
+                val next = root["last_id"]?.jsonPrimitive?.contentOrNull ?: data.lastOrNull()?.jsonObject?.get("id")?.jsonPrimitive?.contentOrNull
+                if (next.isNullOrBlank() || !cursors.add(next)) throw IllegalArgumentException()
+                cursor = next
+            } catch (_: Exception) { throw ApiFailure("服务商返回的模型列表格式或分页不兼容，可以手动填写模型 ID") }
         }
+        throw ApiFailure("服务商返回的模型列表分页过多，请手动填写模型 ID")
     }
 }

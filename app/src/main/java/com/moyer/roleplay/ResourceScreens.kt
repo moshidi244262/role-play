@@ -120,8 +120,10 @@ fun ConfigEditor(initial: RoleplayConfig,assets: List<ResourceAsset>,title: Stri
             assets.filter { it.kind=="regex" }.forEach { asset ->
                 Check(asset.name,asset.id in config.regexIds) { checked -> config=config.copy(regexIds=if(checked) config.regexIds+asset.id else config.regexIds-asset.id) }
             }
-            Field("玩家名称（默认：玩家）",config.playerName,{config=config.copy(playerName=it)},true)
+            Field("用户角色名称（留空用：我）",config.playerName,{config=config.copy(playerName=it)},true)
             Field("玩家身份说明",config.persona,{config=config.copy(persona=it)})
+            Text("未填写姓名时，第一人称使用‘我’。具体人物姓名可在上方身份中填写。", style=MaterialTheme.typography.bodySmall)
+            Options("用户角色的叙述视角", listOf("auto" to "按角色卡与情境", "first" to "第一人称（我）", "third" to "第三人称（人物姓名）"), config.narrativeView) { config=config.copy(narrativeView=it) }
             Field("固定剧情记忆（已发生的事件、关系与线索）",config.memory,{config=config.copy(memory=it)})
             Field("作者注释 / 当前剧情提醒",config.authorNote,{config=config.copy(authorNote=it)})
             TextButton(onClick={advanced=!advanced}) { Text(if(advanced) "收起高级选项" else "上下文与扫描选项") }

@@ -9,11 +9,11 @@ android {
     namespace = "com.moyer.roleplay"
     compileSdk = 35
     defaultConfig {
-        applicationId = "com.moyer.roleplay"
+        applicationId = "com.moyer.roleplay.next"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0-alpha"
+        versionCode = 3
+        versionName = "0.3.0-alpha"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true }
@@ -24,6 +24,16 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     testOptions { unitTests.isReturnDefaultValues = true }
+    // Delivered builds reuse the private upgrade key; CI's disposable debug key is only for tests.
+    System.getenv("ROLEPLAY_SIGNING_KEYSTORE")?.takeIf { it.isNotBlank() }?.let { path ->
+        val delivery = signingConfigs.create("delivery") {
+            storeFile = file(path)
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+        buildTypes.getByName("debug").signingConfig = delivery
+    }
 }
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 dependencies {
@@ -42,6 +52,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.re2j:re2j:1.8")
+    implementation("org.jsoup:jsoup:1.18.3")
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
