@@ -62,4 +62,15 @@ gradle connectedDebugAndroidTest
 
 GitHub Actions 自动构建测试 APK，并运行数据库恢复、备份往返和 UI 生命周期检查。APK 位于 Actions 的 roleplay-0.1.0-test-apk 构建产物。
 
-构建和设备测试结果将在完成后记录在本文，不把未完成的检查标成通过。
+## 验证结果（2026-10-11）
+
+应用代码版本：`3fe4ce556f0617e871949bdf586a598fa4d6c2df`。
+对应 [GitHub Actions 检查](https://github.com/moshidi244262/role-play/actions/runs/38152703073) 两个任务均通过。
+
+- 12 项 JVM 单元测试：备份往返、恢复引用、重复导入、格式与排序校验、协议请求、流式解析、推理内容隔离、网络中断和停止请求。
+- 3 项 Android 10 模拟器测试：数据库关闭重开后恢复历史、草稿和中断状态；备份合并与删除；创建会话及界面重建后恢复草稿。
+- 测试 APK 构建、Android Lint 和 APK 签名校验通过。Lint 无错误，仍有依赖版本更新及系统备份规则提示。
+- 本地交付 APK：`0.1.0-alpha`，最低 Android 8.0（API 26），约 17.5 MB；使用测试签名。
+- 未使用真实 API 密钥，四家服务商的真实调用仍需在安装后验证。
+
+本地交付 APK 的 SHA-256：`e5f9b3a2bceb30330d3a5a6cc8074f70f4031b6b969e51bb05ba0eee24832cc0`。
