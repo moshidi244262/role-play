@@ -109,7 +109,7 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
                 when {
                     !ready -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                     selectedId != null && session == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                    session != null -> ChatScreen(session, messages, connections, drafts[session.id] ?: session.draft, sending,
+                    session != null -> ChatScreen(session, messages.filter { it.sessionId == session.id }, connections, drafts[session.id] ?: session.draft, sending,
                         onBack = vm::backToList, onDraft = { vm.saveDraft(session.id, it) },
                         onSend = { vm.send(it) }, onStop = vm::stop,
                         onContinue = { vm.send(null, true) }, onConnection = { vm.bindConnection(session.id, it) },
