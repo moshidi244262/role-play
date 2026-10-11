@@ -21,6 +21,7 @@ class UiSmokeTest {
         // Returning to the list waits for the Room draft write to appear in UI.
         compose.onNodeWithContentDescription("返回").performClick()
         compose.waitUntil(10000) { compose.onAllNodesWithText("有未发送的草稿").fetchSemanticsNodes().isNotEmpty() }
+        compose.onAllNodesWithText("林舟").onFirst().performClick()
         compose.activityRule.scenario.recreate()
         compose.waitUntil(10000) { compose.onAllNodesWithText("这是重开后保留的草稿").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("这是重开后保留的草稿").assertIsDisplayed()

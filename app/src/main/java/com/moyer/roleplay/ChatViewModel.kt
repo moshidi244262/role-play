@@ -76,6 +76,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             ApiWire.endpoint(profile, "models").also { require(it.isHttps) { "服务地址必须使用 HTTPS" } }
             require(profile.name.isNotBlank() && profile.model.isNotBlank()) { "请填写连接名称和模型 ID" }
             require(profile.maxOutputTokens in 1..65536) { "输出上限须在 1～65536 之间" }
+            if (newKey.isBlank()) {
+                val existing = dao.connection(profile.id)
+                require(existing == null || sameCredentialTarget(existing, profile)) { "服务商或地址已改变，请重新填写密钥" }
+            }
             if (newKey.isNotBlank()) withContext(Dispatchers.IO) { app.secrets.put(profile.id, newKey.trim()) }
             dao.saveConnection(profile.copy(name = profile.name.trim(), model = profile.model.trim(), baseUrl = profile.baseUrl.trim()))
             notice.value = "连接已保存"; onSaved()
@@ -86,8 +90,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (operationBusy.value) return@launch
         operationBusy.value = true; modelChoices.value = emptyList()
         safe {
-            val key = newKey.takeIf { it.isNotBlank() } ?: withContext(Dispatchers.IO) { app.secrets.get(profile.id) }
-                ?: throw IllegalArgumentException("请填写 API 密钥")
+            val key = resolveKey(profile, newKey)
             modelChoices.value = api.models(profile, key.trim())
             notice.value = if (modelChoices.value.isEmpty()) "该接口未返回模型列表，可以手动填写模型 ID" else "已获取模型列表"
         }
@@ -98,8 +101,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (operationBusy.value) return@launch
         operationBusy.value = true
         safe {
-            val key = newKey.takeIf { it.isNotBlank() } ?: withContext(Dispatchers.IO) { app.secrets.get(profile.id) }
-                ?: throw IllegalArgumentException("请填写 API 密钥")
+            val key = resolveKey(profile, newKey)
             var text = ""
             api.stream(profile.copy(maxOutputTokens = 256), key.trim(), listOf(PromptMessage("user", "请只回复：连接成功")))
                 .collect { if (it is ApiEvent.Text) text += it.value }
@@ -229,6 +231,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun safe(action: suspend () -> Unit) {
         try { action() } catch (e: CancellationException) { throw e } catch (e: Exception) { notice.value = safeError(e) }
+    }
+
+    private fun sameCredentialTarget(a: ConnectionProfile, b: ConnectionProfile): Boolean =
+        a.provider == b.provider && a.protocol == b.protocol &&
+            a.baseUrl.trim().trimEnd('/') == b.baseUrl.trim().trimEnd('/')
+
+    private suspend fun resolveKey(profile: ConnectionProfile, typedKey: String): String {
+        if (typedKey.isNotBlank()) return typedKey.trim()
+        val stored = dao.connection(profile.id)
+        require(stored != null && sameCredentialTarget(stored, profile)) { "请为该服务地址填写 API 密钥" }
+        return withContext(Dispatchers.IO) { app.secrets.get(profile.id) }
+            ?: throw IllegalArgumentException("请填写 API 密钥")
     }
 
     // Never surface raw network exception bodies, URLs with credentials, or API response dumps.

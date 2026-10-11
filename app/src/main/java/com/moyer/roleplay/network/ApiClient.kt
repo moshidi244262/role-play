@@ -41,7 +41,7 @@ object ApiWire {
                 put("messages", JsonArray(messages.map { buildJsonObject {
                     put("role", it.role); put("content", it.content)
                 } }))
-                put("max_tokens", profile.maxOutputTokens)
+                put(if (profile.provider == "OpenAI") "max_completion_tokens" else "max_tokens", profile.maxOutputTokens)
             }
             Protocol.RESPONSES -> {
                 put("store", false)
