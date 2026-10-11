@@ -7,8 +7,13 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.json.*
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.Assert.*
 import org.junit.Test
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.util.concurrent.TimeUnit
 
 class ApiClientTest {
     private val profile = ProviderTemplates.all[0].copy(model = "test-model")
@@ -78,5 +83,21 @@ class ApiClientTest {
             characterSnapshot = com.moyer.roleplay.core.appJson.encodeToJsonElement(card).toString())
         val result = com.moyer.roleplay.core.PromptBuilder.build(session, emptyList()).single().content
         assertTrue(result.contains("旧角色 对 玩家 说话"))
+    }
+
+    @Test fun stoppingGenerationCancelsBlockedHttpRead() = runBlocking {
+        val server = MockWebServer()
+        server.start()
+        try {
+            server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+            val job = launch {
+                ApiClient(true).stream(profile.copy(baseUrl = server.url("/v1").toString()),
+                    "fake-test-key", listOf(PromptMessage("user", "test"))).toList()
+            }
+            delay(200)
+            val started = System.nanoTime()
+            job.cancelAndJoin()
+            assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 3000)
+        } finally { server.shutdown() }
     }
 }

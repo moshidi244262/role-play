@@ -2,6 +2,7 @@ package com.moyer.roleplay.network
 
 import com.moyer.roleplay.core.appJson
 import com.moyer.roleplay.data.*
+import com.moyer.roleplay.data.Protocol
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.json.*
@@ -126,6 +127,8 @@ class ApiClient(private val allowInsecureLocalhost: Boolean = false) {
             "服务地址必须使用 HTTPS"
         }
         require(key.isNotBlank()) { "请先填写 API 密钥" }
+        require(key.all { it.code in 33..126 }) { "API 密钥包含空格或无效字符，请重新复制" }
+        require(profile.versionHeader.all { it.code in 32..126 }) { "API 版本头包含无效字符" }
         return Request.Builder().url(url).header("Accept", "application/json").apply {
             if (profile.protocol == Protocol.ANTHROPIC_MESSAGES) {
                 header("x-api-key", key); header("anthropic-version", profile.versionHeader)

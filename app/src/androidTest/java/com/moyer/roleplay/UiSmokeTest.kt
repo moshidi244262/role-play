@@ -3,6 +3,10 @@ package com.moyer.roleplay
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.compose.ui.graphics.asAndroidBitmap
+import android.graphics.Bitmap
+import java.io.File
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -15,7 +19,10 @@ class UiSmokeTest {
         compose.waitUntil(10000) { compose.onAllNodesWithText("角色").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("角色").performClick()
         compose.waitUntil(10000) { compose.onAllNodesWithText("开始新会话").fetchSemanticsNodes().isNotEmpty() }
+        screenshot("01-characters")
         compose.onAllNodesWithText("开始新会话").onFirst().performClick()
+        compose.waitUntil(10000) { compose.onAllNodesWithText("说些什么，或描述你的行动…").fetchSemanticsNodes().isNotEmpty() }
+        screenshot("02-chat")
         compose.onNodeWithText("说些什么，或描述你的行动…").performTextInput("这是重开后保留的草稿")
         compose.waitForIdle()
         // Returning to the list waits for the Room draft write to appear in UI.
@@ -25,5 +32,13 @@ class UiSmokeTest {
         compose.activityRule.scenario.recreate()
         compose.waitUntil(10000) { compose.onAllNodesWithText("这是重开后保留的草稿").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("这是重开后保留的草稿").assertIsDisplayed()
+    }
+
+    private fun screenshot(name: String) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val folder = File(context.getExternalFilesDir(null), "screenshots").apply { mkdirs() }
+        File(folder, "$name.png").outputStream().use {
+            compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
+        }
     }
 }

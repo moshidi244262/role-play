@@ -62,9 +62,13 @@ jobs:
           arch: x86_64
           profile: pixel_2
           disable-animations: true
-          script: gradle connectedDebugAndroidTest --stacktrace
+          script: |
+            gradle connectedDebugAndroidTest --stacktrace
+            adb pull /sdcard/Android/data/com.moyer.roleplay/files/screenshots app/build/ui-screenshots
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: persistence-device-reports
-          path: app/build/reports/androidTests/
+          path: |
+            app/build/reports/androidTests/
+            app/build/ui-screenshots/

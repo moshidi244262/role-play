@@ -178,8 +178,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (operationBusy.value) return@launch
         operationBusy.value = true
         safe {
-            val text = if (readable) repository.readableExport(requireNotNull(sessionId))
+            val text = mutations.withLock {
+                if (readable) repository.readableExport(requireNotNull(sessionId))
                 else BackupCodec.encode(repository.export(sessionId))
+            }
             require(text.toByteArray(Charsets.UTF_8).size <= BackupCodec.MAX_BYTES) { "记录超过 16 MB，暂不支持完整导出" }
             withContext(Dispatchers.IO) {
                 val stream = app.contentResolver.openOutputStream(uri, "wt") ?: error("文件无法写入")
