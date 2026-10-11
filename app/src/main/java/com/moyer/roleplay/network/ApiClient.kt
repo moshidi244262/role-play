@@ -177,6 +177,10 @@ class ApiClient(private val allowInsecureLocalhost: Boolean = false) {
                     if (!complete) dispatch()
                     if (!complete) throw ApiFailure("连接在生成完成前断开，已保留收到的内容")
                 }
+            } catch (error: java.io.IOException) {
+                // Closing the socket during Stop is cancellation, not a network failure.
+                currentCoroutineContext().ensureActive()
+                throw error
             } finally { cancellation.cancel(); call.cancel() }
         }
     }.flowOn(Dispatchers.IO)

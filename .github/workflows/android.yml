@@ -63,8 +63,12 @@ jobs:
           profile: pixel_2
           disable-animations: true
           script: |
+            set +e
             gradle connectedDebugAndroidTest --stacktrace
-            adb pull /sdcard/Android/data/com.moyer.roleplay/files/screenshots app/build/ui-screenshots
+            test_status=$?
+            adb pull /sdcard/Android/data/com.moyer.roleplay/files/screenshots app/build/ui-screenshots || true
+            adb logcat -d > app/build/device-logcat.txt
+            exit $test_status
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -72,3 +76,4 @@ jobs:
           path: |
             app/build/reports/androidTests/
             app/build/ui-screenshots/
+            app/build/device-logcat.txt
