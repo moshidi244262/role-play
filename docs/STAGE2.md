@@ -67,4 +67,14 @@ gradle connectedDebugAndroidTest
 
 安卓测试覆盖原有恢复流程、V1 数据库实际迁移、资料绑定备份合并与解除、分支保留原文与记忆、模型为空仍可保存、连接弹窗内错误与界面生命周期。
 
+### 最终验收（2026-10-11）
+
+- 应用代码版本：`2e8f4a50c2107eaa318a882ca387a2d9daa7352d`。
+- [GitHub Actions](https://github.com/moshidi244262/role-play/actions/runs/38159665192) 构建与安卓设备任务均成功。
+- 31 项 JVM 单元测试、7 项 Android 10 模拟器测试通过；Lint 无错误。
+- 设备测试验证了 PNG 导入预览、头像处理与世界书绑定，连接错误固定可见、模型为空仍可保存，以及旧版数据库迁移、聊天与草稿恢复、资料备份、剧情分支和记忆保留。
+- 交付 APK：`RolePlay-0.2.0-alpha.apk`，22,778,188 字节，最低 Android 8.0；签名与先前交付的 0.1.0 APK 一致。
+- APK SHA-256：`0ce898b8d35a506b5e3be64cee9ab8a3b18b4a2b95732477c57fc4eab6ae3fa7`。
+- DeepSeek 真实账户调用通过；其他三家未做真实账户验收。复杂酒馆脚本及部分资料语法仍有兼容限制，见上表。
+
 接口依据：[DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)、[角色卡 V2](https://github.com/malfoyslastname/character-card-spec-v2)、[SillyTavern 世界书](https://docs.sillytavern.app/usage/core-concepts/worldinfo/)、[SillyTavern 正则](https://docs.sillytavern.app/extensions/regex/)。
