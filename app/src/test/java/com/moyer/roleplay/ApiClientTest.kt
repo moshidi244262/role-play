@@ -81,7 +81,7 @@ class ApiClientTest {
         val card = CharacterCard(name = "旧角色", description = "{{char}} 对 {{user}} 说话")
         val session = ChatSession(title = "测试", characterId = card.id,
             characterSnapshot = com.moyer.roleplay.core.appJson.encodeToJsonElement(card).toString())
-        val result = com.moyer.roleplay.core.PromptBuilder.build(session, emptyList()).single().content
+        val result = com.moyer.roleplay.core.PromptBuilder.build(session, emptyList()).joinToString("\n") {it.content}
         assertTrue(result.contains("旧角色 对 玩家 说话"))
     }
 
@@ -99,5 +99,32 @@ class ApiClientTest {
             job.cancelAndJoin()
             assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 3000)
         } finally { server.shutdown() }
+    }
+
+    @Test fun modelDiscoveryAcceptsBlankModelAndSanitizesFailures() = runBlocking {
+        val server=MockWebServer();server.start()
+        try {
+            val configured=profile.copy(baseUrl=server.url("/").toString(),model="")
+            server.enqueue(MockResponse().setBody("""{"data":[{"id":"b"},{"id":"a"},{"id":"a"},{"id":""}]}"""))
+            assertEquals(listOf("a","b"),ApiClient(true).models(configured,"fake-test-key"))
+            val request=server.takeRequest();assertEquals("/v1/models",request.path)
+            assertEquals("Bearer fake-test-key",request.getHeader("Authorization"))
+            server.enqueue(MockResponse().setResponseCode(401).setBody("private response secret"))
+            val error=runCatching {ApiClient(true).models(configured,"fake-test-key")}.exceptionOrNull()!!
+            assertTrue(error is ApiFailure);assertFalse(error.message!!.contains("private"))
+            server.enqueue(MockResponse().setBody("private malformed body"))
+            assertTrue(runCatching {ApiClient(true).models(configured,"fake-test-key")}.exceptionOrNull() is ApiFailure)
+        } finally {server.shutdown()}
+    }
+
+    @Test fun cacheUsageIsReportedWithoutReasoningText() {
+        assertEquals(listOf(ApiEvent.Usage(100,20,80)),ApiWire.parse(Protocol.CHAT_COMPLETIONS,
+            """{"usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_cache_hit_tokens":80}}"""))
+        assertEquals(listOf(ApiEvent.Usage(100,20,80),ApiEvent.Done),ApiWire.parse(Protocol.RESPONSES,
+            """{"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":20,"input_tokens_details":{"cached_tokens":80}}}}"""))
+        assertEquals(listOf(ApiEvent.Usage(10,0,50)),ApiWire.parse(Protocol.ANTHROPIC_MESSAGES,
+            """{"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":0,"cache_read_input_tokens":50}}}"""))
+        assertEquals(listOf(ApiEvent.Usage(output=20)),ApiWire.parse(Protocol.ANTHROPIC_MESSAGES,
+            """{"type":"message_delta","usage":{"output_tokens":20}}"""))
     }
 }

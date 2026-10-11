@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit
 
 sealed interface ApiEvent {
     data class Text(val value: String) : ApiEvent
-    data class Usage(val input: Int, val output: Int) : ApiEvent
+    data class Usage(val input: Int? = null, val output: Int? = null, val cached: Int? = null) : ApiEvent
     data object Done : ApiEvent
 }
 
@@ -43,6 +43,7 @@ object ApiWire {
                     put("role", it.role); put("content", it.content)
                 } }))
                 put(if (profile.provider == "OpenAI") "max_completion_tokens" else "max_tokens", profile.maxOutputTokens)
+                if(profile.provider in setOf("OpenAI","DeepSeek","Grok")) put("stream_options",buildJsonObject { put("include_usage",true) })
             }
             Protocol.RESPONSES -> {
                 put("store", false)
@@ -76,8 +77,9 @@ object ApiWire {
                         if (it is JsonPrimitive && it.isString) add(ApiEvent.Text(it.content))
                     }
                     root["usage"]?.takeIf { it is JsonObject }?.jsonObject?.let {
-                        add(ApiEvent.Usage(it["prompt_tokens"]?.jsonPrimitive?.intOrNull ?: 0,
-                            it["completion_tokens"]?.jsonPrimitive?.intOrNull ?: 0))
+                        add(ApiEvent.Usage(it["prompt_tokens"]?.jsonPrimitive?.intOrNull,
+                            it["completion_tokens"]?.jsonPrimitive?.intOrNull,
+                            it["prompt_cache_hit_tokens"]?.jsonPrimitive?.intOrNull ?: (it["prompt_tokens_details"] as? JsonObject)?.get("cached_tokens")?.jsonPrimitive?.intOrNull))
                     }
                     // Wait for [DONE] to capture any trailing usage-only chunk.
                 }
@@ -86,13 +88,19 @@ object ApiWire {
                         root["delta"]?.jsonPrimitive?.contentOrNull?.let { add(ApiEvent.Text(it)) }
                     "response.completed" -> {
                         root["response"]?.jsonObject?.get("usage")?.jsonObject?.let {
-                            add(ApiEvent.Usage(it["input_tokens"]?.jsonPrimitive?.intOrNull ?: 0,
-                                it["output_tokens"]?.jsonPrimitive?.intOrNull ?: 0))
+                            add(ApiEvent.Usage(it["input_tokens"]?.jsonPrimitive?.intOrNull,
+                                it["output_tokens"]?.jsonPrimitive?.intOrNull,
+                                (it["input_tokens_details"] as? JsonObject)?.get("cached_tokens")?.jsonPrimitive?.intOrNull))
                         }
                         add(ApiEvent.Done)
                     }
                 }
                 Protocol.ANTHROPIC_MESSAGES -> when (root["type"]?.jsonPrimitive?.content) {
+                    "message_start", "message_delta" -> {
+                        val usage=(root["usage"] ?: (root["message"] as? JsonObject)?.get("usage")) as? JsonObject
+                        usage?.let { add(ApiEvent.Usage(it["input_tokens"]?.jsonPrimitive?.intOrNull,
+                            it["output_tokens"]?.jsonPrimitive?.intOrNull,it["cache_read_input_tokens"]?.jsonPrimitive?.intOrNull)) }
+                    }
                     "content_block_delta" -> root["delta"]?.jsonObject?.let {
                         if (it["type"]?.jsonPrimitive?.content == "text_delta")
                             it["text"]?.jsonPrimitive?.contentOrNull?.let { text -> add(ApiEvent.Text(text)) }
@@ -186,12 +194,15 @@ class ApiClient(private val allowInsecureLocalhost: Boolean = false) {
     }.flowOn(Dispatchers.IO)
 
     suspend fun models(profile: ConnectionProfile, key: String): List<String> = withContext(Dispatchers.IO) {
-        client.newCall(request(profile, key, "models").get().build()).execute().use {
+        val modelClient = client.newBuilder().callTimeout(20, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()
+        modelClient.newCall(request(profile, key, "models").get().build()).execute().use {
             if (!it.isSuccessful) throw ApiFailure(ApiWire.httpError(it.code))
             val body = it.body?.string() ?: throw ApiFailure("服务商返回空模型列表")
-            val root = appJson.parseToJsonElement(body).jsonObject
-            root["data"]?.jsonArray?.mapNotNull { row -> row.jsonObject["id"]?.jsonPrimitive?.contentOrNull }
-                ?.distinct()?.sorted() ?: emptyList()
+            try {
+                val root = appJson.parseToJsonElement(body).jsonObject
+                root["data"]?.jsonArray?.mapNotNull { row -> row.jsonObject["id"]?.jsonPrimitive?.contentOrNull }
+                    ?.filter { id -> id.isNotBlank() }?.distinct()?.sorted() ?: emptyList()
+            } catch (_: Exception) { throw ApiFailure("服务商返回的模型列表格式不兼容，可以手动填写模型 ID") }
         }
     }
 }

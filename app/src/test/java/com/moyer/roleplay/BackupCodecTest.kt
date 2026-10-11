@@ -37,7 +37,7 @@ class BackupCodecTest {
     }
 
     @Test fun rejectsUnknownVersionMissingReferencesAndDuplicateMessagePositions() {
-        assertThrows(IllegalArgumentException::class.java) { BackupCodec.validate(bundle().copy(version = 2)) }
+        assertThrows(IllegalArgumentException::class.java) { BackupCodec.validate(bundle().copy(version = 3)) }
         assertThrows(IllegalArgumentException::class.java) { BackupCodec.validate(bundle().copy(characters = emptyList())) }
         assertThrows(IllegalArgumentException::class.java) { BackupCodec.validate(bundle().copy(messages = listOf(message, message.copy(id = newId())))) }
     }

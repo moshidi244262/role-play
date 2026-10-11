@@ -16,6 +16,10 @@ data class CharacterCard(
     val scenario: String = "",
     val greeting: String = "",
     val exampleDialogue: String = "",
+    @ColumnInfo(defaultValue = "'{}'") val config: String = "{}",
+    @ColumnInfo(defaultValue = "''") val sourceJson: String = "",
+    @ColumnInfo(defaultValue = "''") val avatar: String = "",
+    @ColumnInfo(defaultValue = "'[]'") val alternateGreetings: String = "[]",
     val updatedAt: Long = System.currentTimeMillis()
 )
 
@@ -46,6 +50,7 @@ data class ChatSession(
     val connectionId: String? = null,
     val playerName: String = "玩家",
     val draft: String = "",
+    @ColumnInfo(defaultValue = "'{}'") val config: String = "{}",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
@@ -62,6 +67,9 @@ data class ChatMessage(
     val content: String,
     val position: Long,
     val status: String = "complete",
+    val inputTokens: Int? = null,
+    val outputTokens: Int? = null,
+    val cachedTokens: Int? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
 
@@ -70,7 +78,7 @@ data class PromptMessage(val role: String, val content: String)
 object ProviderTemplates {
     val all = listOf(
         ConnectionProfile(id = "template-deepseek", name = "DeepSeek", provider = "DeepSeek",
-            baseUrl = "https://api.deepseek.com", protocol = Protocol.CHAT_COMPLETIONS, model = ""),
+            baseUrl = "https://api.deepseek.com", protocol = Protocol.CHAT_COMPLETIONS, model = "deepseek-flash"),
         ConnectionProfile(id = "template-openai", name = "OpenAI", provider = "OpenAI",
             baseUrl = "https://api.openai.com/v1", protocol = Protocol.RESPONSES, model = ""),
         ConnectionProfile(id = "template-claude", name = "Claude", provider = "Claude",
