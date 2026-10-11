@@ -73,6 +73,12 @@ class RoleplayEngineTest {
         assertTrue((System.nanoTime()-start)/1000000<2000)
     }
 
+    @Test fun disabledRulesDoNotUseTheActiveRuleLimitAndOverflowIsReported() {
+        val disabled=List(32) {TextRule(enabled=false,pattern="/a/g",replacement="bad")}
+        assertEquals("b",RegexEngine.apply("a",disabled+TextRule(pattern="/a/g",replacement="b"),"assistant",true).text)
+        assertTrue(RegexEngine.apply("a",List(33) {TextRule(pattern="/z/g",replacement="x")},"assistant",true).warnings.any {it.contains("32")})
+    }
+
     @Test fun v1BackupAndV2ResourceReferencesRoundTripWithoutReusingIds() {
         val asset=book(listOf(LoreEntry(constant=true,content="地图")))
         val configured=card.copy(config=RoleplayConfig(lorebookIds=listOf(asset.id)).json())

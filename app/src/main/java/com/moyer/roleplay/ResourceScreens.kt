@@ -116,6 +116,7 @@ fun ConfigEditor(initial: RoleplayConfig,assets: List<ResourceAsset>,title: Stri
             }
             config.characterPromptId?.let { id -> Text("角色附加提示：${assets.firstOrNull { it.id==id }?.name ?: "资料缺失"}。选择叙事预设后仍会保留。",style=MaterialTheme.typography.bodySmall) }
             Text("正则规则",style=MaterialTheme.typography.titleSmall)
+            Text("按绑定顺序执行前 32 条启用规则。",style=MaterialTheme.typography.bodySmall)
             assets.filter { it.kind=="regex" }.forEach { asset ->
                 Check(asset.name,asset.id in config.regexIds) { checked -> config=config.copy(regexIds=if(checked) config.regexIds+asset.id else config.regexIds-asset.id) }
             }

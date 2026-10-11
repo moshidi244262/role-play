@@ -31,6 +31,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -265,7 +268,7 @@ private fun SessionScreen(sessions: List<ChatSession>, onOpen: (String) -> Unit,
 @Composable
 private fun CharacterScreen(cards: List<CharacterCard>, onNew: () -> Unit, onImport: ()->Unit, onExport: (CharacterCard)->Unit, onEdit: (CharacterCard) -> Unit,
     onChat: (CharacterCard) -> Unit) {
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp).testTag("characters"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { PageHeading("角色", "选择一位角色，开启新的故事") {
             FilledTonalIconButton(onClick = onNew) { Icon(Icons.Outlined.Add, "新建角色") }
         } }
@@ -284,7 +287,7 @@ private fun CharacterScreen(cards: List<CharacterCard>, onNew: () -> Unit, onImp
                     }
                     if (card.scenario.isNotBlank()) Text(card.scenario, Modifier.padding(vertical = 16.dp), maxLines = 3,
                         style = MaterialTheme.typography.bodyMedium)
-                    Button(onClick = { onChat(card) }, modifier = Modifier.fillMaxWidth()) { Text("开始新会话") }
+                    Button(onClick = { onChat(card) }, modifier = Modifier.fillMaxWidth().semantics {contentDescription="开始与${card.name}的新会话"}) { Text("开始新会话") }
                     TextButton(onClick={onExport(card)}) {Text("导出角色与关联资料")}
                 }
             }
@@ -509,7 +512,9 @@ private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDi
     LaunchedEffect(initial.id) { vm.modelChoices.value = emptyList(); vm.connectionFeedback.value = null }
     LaunchedEffect(choices) { if (model.isBlank() && choices.isNotEmpty()) model = choices.first() }
     AlertDialog(onDismissRequest = { if (!busy) onDismiss() }, title = { Text("API 连接") }, text = {
-        Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.heightIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            feedback?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall) }
+            Column(Modifier.weight(1f,fill=false).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 ProviderTemplates.all.forEach { template -> FilterChip(selected = provider == template.provider, enabled = !busy,
                     onClick = {
@@ -525,7 +530,6 @@ private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDi
             EditorField("服务地址（Base URL）", url, { url = it }, true)
             EditorField("模型 ID", model, { model = it }, true)
             TextButton(enabled = !busy, onClick = { vm.fetchModels(profile(), key) }) { Text(if (busy) "正在连接…" else "获取模型列表") }
-            feedback?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall) }
             Text("模型列表不可用时也能先保存连接，再手动填写模型 ID。", style = MaterialTheme.typography.bodySmall)
             if (choices.isNotEmpty()) Column(Modifier.heightIn(max = 180.dp).verticalScroll(rememberScrollState())) {
                 choices.forEach { id -> TextButton(onClick = { model = id }) { Text(id) } }
@@ -544,6 +548,7 @@ private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDi
             }
             OutlinedButton(onClick = { costConfirmation = true }, enabled = !busy && model.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
                 Text("测试生成连接")
+            }
             }
         }
     }, confirmButton = { TextButton(enabled = !busy && name.isNotBlank() && url.isNotBlank(), onClick = {

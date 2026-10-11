@@ -49,7 +49,9 @@ object RegexEngine {
             fun name(s: String) = if (escape) Pattern.quote(s) else s
             return value.replace("{{char}}", name(charName)).replace("{{user}}", name(userName))
         }
-        for (rule in rules.take(32)) {
+        val enabled=rules.filter {it.enabled}
+        if(enabled.size>32) warnings+="已绑定超过 32 条启用正则，仅执行前 32 条"
+        for (rule in enabled.take(32)) {
             if (!rule.enabled || target !in rule.targets || (display && !rule.display) || (!display && !rule.prompt) ||
                 depth < rule.minDepth || (rule.maxDepth >= 0 && depth > rule.maxDepth)) continue
             try {

@@ -19,7 +19,7 @@ fun estimateTokens(text: String): Int = kotlin.math.ceil(text.sumOf { if (it.cod
 object PromptBuilder {
     fun rules(config: RoleplayConfig, assets: List<ResourceAsset>): List<TextRule> = config.regexIds.mapNotNull { id ->
         assets.firstOrNull { it.id == id && it.enabled && it.kind == "regex" }
-    }.flatMap { appJson.decodeFromString<RegexRules>(it.payload).rules }.take(32)
+    }.flatMap { appJson.decodeFromString<RegexRules>(it.payload).rules }.filter { it.enabled }
 
     fun build(session: ChatSession, history: List<ChatMessage>): List<PromptMessage> = compile(session, history).messages
 
@@ -29,11 +29,12 @@ object PromptBuilder {
         val user = config.playerName.ifBlank { session.playerName }
         val rules = rules(config, assets)
         val warnings = mutableListOf<String>()
+        if(rules.size>32) warnings+="已绑定超过 32 条启用正则，仅执行前 32 条"
         fun macros(text: String): String {
             val result = text.replace("{{char}}", card.name).replace("{{user}}", user)
                 .replace("{{description}}", card.description).replace("{{personality}}", card.personality)
                 .replace("{{scenario}}", card.scenario).replace("{{persona}}", config.persona)
-            if (Regex("\\{\\{[^{}]+}}").containsMatchIn(result)) warnings += "部分高级宏未展开，请检查上下文或修改资料"
+            if (Regex("\\{\\{[^{}]+\\}\\}").containsMatchIn(result)) warnings += "部分高级宏未展开，请检查上下文或修改资料"
             return result
         }
         fun transform(text: String, target: String, depth: Int) = RegexEngine.apply(text,rules,target,false,depth,card.name,user)
