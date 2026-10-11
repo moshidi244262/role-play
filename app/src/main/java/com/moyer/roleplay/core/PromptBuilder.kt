@@ -113,7 +113,7 @@ object PromptBuilder {
                     if(pass>0) hits.filter { !it.entry.preventRecursion }.joinToString("\n") { it.content } else ""
                 val primary=entry.constant || entry.keys.any { matches(it,scan,entry.caseSensitive) }
                 val secondary=entry.secondaryKeys.map { matches(it,scan,entry.caseSensitive) }
-                val filter=!entry.selective || secondary.isEmpty() || when(entry.logic) {
+                val filter=entry.constant || !entry.selective || secondary.isEmpty() || when(entry.logic) {
                     "and_all"->secondary.all{it};"not_any"->secondary.none{it};"not_all"->!secondary.all{it};else->secondary.any{it}
                 }
                 if(primary && filter && entry.content.isNotBlank()) candidates += Hit(asset.id,asset.name,entry,transform(entry.content),

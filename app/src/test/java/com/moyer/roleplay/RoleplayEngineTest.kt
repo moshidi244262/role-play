@@ -25,7 +25,7 @@ class RoleplayEngineTest {
     }
 
     @Test fun constantsTakeBudgetFirstAndDisabledEntriesNeverActivate() {
-        val asset=book(listOf(LoreEntry(name="常驻",constant=true,content="甲乙丙丁"),LoreEntry(name="关键词",keys=listOf("门"),content="甲乙丙丁"),
+        val asset=book(listOf(LoreEntry(name="常驻",constant=true,selective=true,secondaryKeys=listOf("不应限制常驻"),content="甲乙丙丁"),LoreEntry(name="关键词",keys=listOf("门"),content="甲乙丙丁"),
             LoreEntry(name="停用",constant=true,enabled=false,content="不能出现")))
         val report=PromptBuilder.compile(session(RoleplayConfig(lorebookIds=listOf(asset.id),loreBudget=6)),messages("门"),listOf(asset))
         assertEquals(1,report.hits.size);assertTrue(report.hits.single().contains("常驻"))
