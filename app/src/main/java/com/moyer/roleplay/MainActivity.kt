@@ -8,6 +8,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -21,6 +23,7 @@ import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -40,6 +43,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.moyer.roleplay.data.*
@@ -70,20 +74,20 @@ private val navigation = listOf(NavItem("会话", Icons.Outlined.ChatBubbleOutli
 fun RolePlayApp(vm: ChatViewModel = viewModel()) {
     val dark by vm.darkMode.collectAsStateWithLifecycle()
     val showTokenUsage by vm.showTokenUsage.collectAsStateWithLifecycle()
-    val colors = if (dark) darkColorScheme(primary = Color(0xFFBFB1FF), secondary = Color(0xFFA9C8C8),
-        background = Color(0xFF15141C), surface = Color(0xFF1C1B25))
-    else lightColorScheme(primary = Color(0xFF7463C9), secondary = Color(0xFF537E80),
-        background = Color(0xFFF8F7FC), surface = Color(0xFFFDFCFF))
-    MaterialTheme(colorScheme = colors) {
+    val reading by vm.readingAppearance.collectAsStateWithLifecycle()
+    RolePlayTheme(dark, reading) {
         val ready by vm.ready.collectAsStateWithLifecycle()
         val cards by vm.characters.collectAsStateWithLifecycle()
         val connections by vm.connections.collectAsStateWithLifecycle()
         val sessions by vm.sessions.collectAsStateWithLifecycle()
+        val previews by vm.sessionPreviews.collectAsStateWithLifecycle()
         val resources by vm.resources.collectAsStateWithLifecycle()
         val defaults by vm.defaults.collectAsStateWithLifecycle()
         val selectedId by vm.selectedId.collectAsStateWithLifecycle()
         val messages by vm.messages.collectAsStateWithLifecycle()
         val sending by vm.sending.collectAsStateWithLifecycle()
+        val summaryBusy by vm.summaryBusy.collectAsStateWithLifecycle()
+        val summaryCandidate by vm.summaryCandidate.collectAsStateWithLifecycle()
         val drafts by vm.drafts.collectAsStateWithLifecycle()
         val notice by vm.notice.collectAsStateWithLifecycle()
         val pending by vm.pendingImport.collectAsStateWithLifecycle()
@@ -106,6 +110,7 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
         var editingAsset by remember { mutableStateOf<ResourceAsset?>(null) }
         var deletingAsset by remember { mutableStateOf<ResourceAsset?>(null) }
         var exportAsset by remember { mutableStateOf<ResourceAsset?>(null) }
+        var memoryTarget by remember {mutableStateOf<ChatSession?>(null)}
         var configTarget by remember { mutableStateOf<ChatSession?>(null) }
         var editingDefaults by remember { mutableStateOf(false) }
         var greetingCard by remember { mutableStateOf<CharacterCard?>(null) }
@@ -157,7 +162,7 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
         fun returnToSessions() { tab = 0; vm.backToList() }
         BackHandler(enabled = selectedId != null) { returnToSessions() }
         Scaffold(snackbarHost = { SnackbarHost(snackbar) }, bottomBar = {
-            if (selectedId == null && !(tab==3 && (helpOpen || inspectorOpen))) NavigationBar {
+            if (selectedId == null && !(tab==3 && (helpOpen || inspectorOpen))) NavigationBar(containerColor=MaterialTheme.colorScheme.surface, tonalElevation=0.dp) {
                 navigation.forEachIndexed { index, item ->
                     NavigationBarItem(selected = tab == index, onClick = { tab = index; helpOpen=false; inspectorOpen=false },
                         icon = { Icon(item.icon, item.title) }, label = { Text(item.title) })
@@ -169,7 +174,7 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
                 when {
                     !ready -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                     selectedId != null && session == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                    session != null -> ChatScreen(session, messages.filter { it.sessionId == session.id }, connections, resources, drafts[session.id] ?: session.draft, sending,
+                    session != null -> ChatScreen(session, messages.filter { it.sessionId == session.id }, connections, resources, drafts[session.id] ?: session.draft, sending || summaryBusy,
                         onBack = ::returnToSessions, onDraft = { vm.saveDraft(session.id, it) },
                         onSend = { vm.send(it) }, onStop = vm::stop,
                         onContinue = { vm.send(null, true) }, onConnection = { vm.bindConnection(session.id, it) },
@@ -179,7 +184,7 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
                         savedModels = savedModels, fetchedModels = modelChoices, modelFeedback = connectionFeedback, modelBusy = operationBusy,
                         onFetchModels = { vm.modelChoices.value = savedModels[it.id].orEmpty(); vm.fetchModels(it, "") },
                         onModel = { vm.selectModel(session.id, it) },
-                        showTokenUsage = showTokenUsage, onShowTokenUsage = vm::setShowTokenUsage,
+                        showTokenUsage = showTokenUsage, onShowTokenUsage = vm::setShowTokenUsage, onMemory={memoryTarget=session}, summarizing=summaryBusy,
                         onPreview = { scope.launch { runCatching { vm.promptPreview(session.id) }.onSuccess { preview = it }.onFailure {vm.notice.value="上下文无法组装，请检查会话预算与资料"} } })
                     tab == 3 && helpOpen -> HelpScreen { helpOpen=false }
                     tab == 3 && inspectorOpen -> CardInspectorScreen(cards,cardInspection,cardInspectionBusy,cardInspectionError,
@@ -189,7 +194,7 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
                             if(json) inspectionJsonExporter.launch("roleplay-card.json") else inspectionTextExporter.launch("roleplay-card.txt")
                         }})
                     tab == 0 -> SessionScreen(sessions, cards, vm::openChat, { deleting = it }, { tab = 1 },
-                        { importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) })
+                        { importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, previews)
                     tab == 1 -> CharacterScreen(cards, { editCharacter = CharacterCard(name = "") }, ::importFile,
                         {exportCard=it;cardExporter.launch("roleplay-character.json")},
                         { editCharacter = it }, {card ->
@@ -201,7 +206,7 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
                         {exportJson(null)},{editingDefaults=true},::importResource)
                     else -> SettingsScreen(connections, dark, { vm.setDark(it) }, showTokenUsage, vm::setShowTokenUsage,
                         { editConnection = ProviderTemplates.all.first().copy(id = newId()) }, { editConnection = it },
-                        { exportJson(null) }, { importKind=null; importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, {helpOpen=true}, {inspectorOpen=true})
+                        { exportJson(null) }, { importKind=null; importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, {helpOpen=true}, {inspectorOpen=true}, reading, vm::setReadingAppearance)
                 }
             }
         }
@@ -215,6 +220,9 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
             text={Text("将删除“${asset.name}”，并解除它与角色及会话的绑定。已有聊天文字会保留。")},
             confirmButton={TextButton(onClick={vm.deleteResource(asset.id);deletingAsset=null}) {Text("删除")}},
             dismissButton={TextButton(onClick={deletingAsset=null}) {Text("取消")}})}
+        memoryTarget?.let {session -> StoryMemoryEditor(session,messages.filter {it.sessionId==session.id},summaryBusy,summaryCandidate,
+            {vm.generateStorySummary(session.id)},vm::stop,{memoryTarget=null},
+            {fixed,summary,automatic,compact,enabled,expected -> vm.saveStoryMemory(session.id,fixed,summary,automatic,compact,enabled,expected) {memoryTarget=null}}) }
         configTarget?.let {session->ConfigEditor(readConfig(session.config),resources,"会话设定",{configTarget=null}) {vm.saveConfig(session.id,it) {configTarget=null}}}
         if(editingDefaults) ConfigEditor(defaults,resources,"新会话默认设定",{editingDefaults=false}) {vm.saveConfig(null,it) {editingDefaults=false}}
         greetingCard?.let {card->
@@ -249,88 +257,110 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
 }
 
 @Composable
-private fun PageHeading(title: String, subtitle: String, action: @Composable (() -> Unit)? = null) {
-    Row(Modifier.fillMaxWidth().padding(top = 28.dp, bottom = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 6.dp))
-        }
-        action?.invoke()
-    }
-}
-
-@Composable
 internal fun SessionScreen(sessions: List<ChatSession>, cards: List<CharacterCard>, onOpen: (String) -> Unit, onDelete: (ChatSession) -> Unit,
-    onNew: () -> Unit, onImport: () -> Unit) {
+    onNew: () -> Unit, onImport: () -> Unit, previews: Map<String,String> = emptyMap()) {
     val cardsById = remember(cards) { cards.associateBy { it.id } }
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp).testTag("sessions"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { PageHeading("会话", "故事保存在这里，随时接着聊") {
-            FilledTonalIconButton(onClick = onNew) { Icon(Icons.Outlined.Add, "新建会话") }
+    var search by rememberSaveable { mutableStateOf("") }
+    val filtered=remember(sessions,search,previews) { sessions.filter { search.isBlank() || it.title.contains(search,true) || previews[it.id].orEmpty().contains(search,true) } }
+    Box(Modifier.fillMaxSize(),contentAlignment=Alignment.TopCenter) {
+    LazyColumn(Modifier.widthIn(max=840.dp).fillMaxSize().padding(horizontal=20.dp).testTag("sessions"),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        item { PageHeading("会话", "留一盏灯，继续你的故事") {
+            FilledTonalIconButton(onClick=onNew) { Icon(Icons.Outlined.Add,"新建会话") }
         } }
-        if (sessions.isEmpty()) item {
-            EmptyPanel("开始你的第一个故事", "从角色页选择角色，也可以导入之前导出的记录。", onNew, "选择角色")
-            TextButton(onClick = onImport) { Text("导入聊天记录") }
+        if(sessions.isNotEmpty()) item {
+            OutlinedTextField(search,{search=it},Modifier.fillMaxWidth().testTag("session-search"),singleLine=true,
+                placeholder={Text("搜索会话或最近剧情")},leadingIcon={Icon(Icons.Outlined.Search,null)},
+                trailingIcon={if(search.isNotEmpty()) IconButton(onClick={search=""}) {Icon(Icons.Outlined.Close,"清空搜索")}},shape=RoundedCornerShape(18.dp))
         }
-        items(sessions, key = { it.id }) { session ->
-            ElevatedCard(onClick = { onOpen(session.id) }, modifier = Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    val avatar = remember(session.characterSnapshot, cardsById[session.characterId]) { sessionAvatar(session, cardsById[session.characterId]) }
-                    CharacterAvatar(session.title, avatar, Modifier.testTag("session-avatar-${session.id}"))
-                    Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
-                        Text(session.title, fontWeight = FontWeight.SemiBold)
-                        Text(SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(session.updatedAt)),
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        if (session.draft.isNotEmpty()) Text("有未发送的草稿", style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary)
+        if(sessions.isEmpty()) item {
+            EmptyPanel("开始你的第一个故事","选择一个角色，或把已有的故事带到这里。",onNew,"选择角色")
+            TextButton(onClick=onImport) {Text("导入聊天记录")}
+        }
+        if(filtered.isEmpty() && search.isNotBlank()) item {Text("没有找到匹配的会话",color=MaterialTheme.colorScheme.onSurfaceVariant)}
+        itemsIndexed(filtered,key={_,it->it.id}) {index,session ->
+            var menu by remember(session.id) {mutableStateOf(false)}
+            val latest=index==0 && search.isBlank()
+            if(latest) SectionLabel("继续上次")
+            else if(index==1 && search.isBlank()) SectionLabel("其他故事")
+            Card(onClick={onOpen(session.id)},modifier=Modifier.fillMaxWidth(),
+                colors=CardDefaults.cardColors(containerColor=if(latest) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceContainerLow),
+                elevation=CardDefaults.cardElevation(defaultElevation=0.dp)) {
+                Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                    Row(verticalAlignment=Alignment.CenterVertically) {
+                        val avatar=remember(session.characterSnapshot,cardsById[session.characterId]) {sessionAvatar(session,cardsById[session.characterId])}
+                        CharacterAvatar(session.title,avatar,Modifier.testTag("session-avatar-${session.id}"))
+                        Column(Modifier.weight(1f).padding(horizontal=14.dp)) {
+                            Text(session.title,style=MaterialTheme.typography.titleMedium,maxLines=1,overflow=TextOverflow.Ellipsis)
+                            Text(SimpleDateFormat("MM-dd HH:mm",Locale.getDefault()).format(Date(session.updatedAt)),
+                                style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Box {
+                            IconButton(onClick={menu=true}) {Icon(Icons.Outlined.MoreHoriz,"会话操作：${session.title}")}
+                            DropdownMenu(expanded=menu,onDismissRequest={menu=false}) {
+                                DropdownMenuItem(text={Text("删除会话")},leadingIcon={Icon(Icons.Outlined.DeleteOutline,null)},onClick={menu=false;onDelete(session)})
+                            }
+                        }
                     }
-                    IconButton(onClick = { onDelete(session) }) { Icon(Icons.Outlined.DeleteOutline, "删除会话") }
+                    if(latest) AccentRule()
+                    val snippet=previews[session.id].orEmpty()
+                    if(snippet.isNotBlank()) Text(snippet,maxLines=if(latest) 3 else 2,overflow=TextOverflow.Ellipsis,
+                        style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    if(session.draft.isNotEmpty()) Text("有未发送的草稿",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary)
+                    if(latest) Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End) {
+                        FilledTonalButton(onClick={onOpen(session.id)},modifier=Modifier.testTag("continue-last-story")) {Text("继续故事");Spacer(Modifier.width(8.dp));Icon(Icons.AutoMirrored.Outlined.ArrowForward,null,Modifier.size(18.dp))}
+                    }
                 }
             }
         }
-        item { Spacer(Modifier.height(16.dp)) }
+        item {Spacer(Modifier.height(20.dp))}
+    }
     }
 }
 
 @Composable
-private fun CharacterScreen(cards: List<CharacterCard>, onNew: () -> Unit, onImport: ()->Unit, onExport: (CharacterCard)->Unit, onEdit: (CharacterCard) -> Unit,
+internal fun CharacterScreen(cards: List<CharacterCard>, onNew: () -> Unit, onImport: ()->Unit, onExport: (CharacterCard)->Unit, onEdit: (CharacterCard) -> Unit,
     onChat: (CharacterCard) -> Unit) {
-    var search by rememberSaveable { mutableStateOf("") }
-    val filtered = remember(cards, search) { searchCharacters(cards, search) }
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp).testTag("characters"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { PageHeading("角色", "选择一位角色，开启新的故事") {
-            FilledTonalIconButton(onClick = onNew) { Icon(Icons.Outlined.Add, "新建角色") }
-        } }
-        item { TextButton(onClick=onImport) {Text("导入酒馆角色卡（PNG / JSON）")} }
-        item {
-            OutlinedTextField(search, { search = it }, modifier = Modifier.fillMaxWidth().testTag("character-search"),
-                label = { Text("搜索角色名称、描述、性格或场景") }, singleLine = true,
-                leadingIcon = { Icon(Icons.Outlined.Search, null) }, trailingIcon = {
-                    if (search.isNotEmpty()) IconButton(onClick = { search = "" }) { Icon(Icons.Outlined.Close, "清空搜索") }
-                })
-            if (search.isNotBlank()) Text("找到 ${filtered.size} / ${cards.size} 个角色", style = MaterialTheme.typography.bodySmall)
-        }
-        if (filtered.isEmpty() && search.isNotBlank()) item { Text("没有匹配的角色，试试其他关键词。") }
-        items(filtered, key = { it.id }) { card ->
-            ElevatedCard(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(18.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CharacterAvatar(card.name, card.displayAvatar(), Modifier.testTag("character-avatar-${card.id}"))
-                        Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                            Text(card.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                            Text(card.personality.ifBlank { "自定义角色" }, maxLines = 2,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+    var search by rememberSaveable {mutableStateOf("")}
+    val filtered=remember(cards,search) {searchCharacters(cards,search)}
+    Box(Modifier.fillMaxSize(),contentAlignment=Alignment.TopCenter) {
+    LazyColumn(Modifier.widthIn(max=840.dp).fillMaxSize().padding(horizontal=20.dp).testTag("characters"),verticalArrangement=Arrangement.spacedBy(14.dp)) {
+        item {PageHeading("角色","${cards.size} 位角色 · 每一个都是新的相遇") {
+            FilledTonalIconButton(onClick=onNew) {Icon(Icons.Outlined.Add,"新建角色")}
+        }}
+        item {OutlinedTextField(search,{search=it},Modifier.fillMaxWidth().testTag("character-search"),
+            placeholder={Text("搜索角色、性格或场景")},singleLine=true,shape=RoundedCornerShape(18.dp),
+            leadingIcon={Icon(Icons.Outlined.Search,null)},trailingIcon={if(search.isNotEmpty()) IconButton(onClick={search=""}) {Icon(Icons.Outlined.Close,"清空搜索")}})}
+        item {TextButton(onClick=onImport) {Icon(Icons.Outlined.FileDownload,null,Modifier.size(18.dp));Spacer(Modifier.width(6.dp));Text("导入酒馆角色卡（PNG / JSON）")}}
+        if(search.isNotBlank()) item {Text("找到 ${filtered.size} / ${cards.size} 个角色",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+        if(filtered.isEmpty()) item {EmptyPanel(if(search.isBlank()) "遇见你的第一位角色" else "没有匹配的角色",
+            if(search.isBlank()) "导入角色卡，或者从一个简单的设定开始。" else "试试其他关键词。")}
+        items(filtered,key={it.id}) {card ->
+            var menu by remember(card.id) {mutableStateOf(false)}
+            Card(Modifier.fillMaxWidth(),colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
+                    Row(verticalAlignment=Alignment.CenterVertically) {
+                        CharacterAvatar(card.name,card.displayAvatar(),Modifier.testTag("character-avatar-${card.id}"))
+                        Column(Modifier.weight(1f).padding(start=14.dp)) {
+                            Text(card.name,style=MaterialTheme.typography.titleLarge,maxLines=2,overflow=TextOverflow.Ellipsis)
+                            Text(remember(card.personality) {MessageMarkup.preview(card.personality).ifBlank {"自定义角色"}},maxLines=2,overflow=TextOverflow.Ellipsis,
+                                color=MaterialTheme.colorScheme.onSurfaceVariant,style=MaterialTheme.typography.bodySmall)
                         }
-                        IconButton(onClick = { onEdit(card) }) { Icon(Icons.Outlined.Edit, "编辑角色") }
+                        IconButton(onClick={onEdit(card)}) {Icon(Icons.Outlined.Edit,"编辑角色")}
+                        Box {
+                            IconButton(onClick={menu=true}) {Icon(Icons.Outlined.MoreVert,"更多角色操作：${card.name}")}
+                            DropdownMenu(menu,{menu=false}) {DropdownMenuItem(text={Text("导出角色与关联资料")},onClick={menu=false;onExport(card)})}
+                        }
                     }
-                    if (card.scenario.isNotBlank()) Text(card.scenario, Modifier.padding(vertical = 16.dp), maxLines = 3,
-                        style = MaterialTheme.typography.bodyMedium)
-                    Button(onClick = { onChat(card) }, modifier = Modifier.fillMaxWidth().semantics {contentDescription="开始与${card.name}的新会话"}) { Text("开始新会话") }
-                    TextButton(onClick={onExport(card)}) {Text("导出角色与关联资料")}
+                    if(card.scenario.isNotBlank()) Text(remember(card.scenario) {MessageMarkup.preview(card.scenario)},maxLines=3,overflow=TextOverflow.Ellipsis,
+                        style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End) {
+                        FilledTonalButton(onClick={onChat(card)},modifier=Modifier.semantics {contentDescription="开始与${card.name}的新会话"}) {Text("开始新会话");Spacer(Modifier.width(8.dp));Icon(Icons.Outlined.ChatBubbleOutline,null,Modifier.size(18.dp))}
+                    }
                 }
             }
         }
-        item { Spacer(Modifier.height(16.dp)) }
+        item {Spacer(Modifier.height(20.dp))}
+    }
     }
 }
 
@@ -348,8 +378,9 @@ private fun EmptyPanel(title: String, detail: String, action: (() -> Unit)? = nu
 @Composable
 private fun SettingsScreen(connections: List<ConnectionProfile>, dark: Boolean, onDark: (Boolean) -> Unit,
     showTokenUsage: Boolean, onShowTokenUsage: (Boolean) -> Unit,
-    onNew: () -> Unit, onEdit: (ConnectionProfile) -> Unit, onBackup: () -> Unit, onImport: () -> Unit, onHelp: () -> Unit, onInspector: ()->Unit) {
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    onNew: () -> Unit, onEdit: (ConnectionProfile) -> Unit, onBackup: () -> Unit, onImport: () -> Unit, onHelp: () -> Unit, onInspector: ()->Unit, reading: ReadingAppearance = ReadingAppearance(), onReading: (ReadingAppearance)->Unit = {}) {
+    Box(Modifier.fillMaxSize(),contentAlignment=Alignment.TopCenter) {
+    LazyColumn(Modifier.widthIn(max=840.dp).fillMaxSize().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { PageHeading("设置", "连接模型，调整你的使用方式") }
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -367,6 +398,7 @@ private fun SettingsScreen(connections: List<ConnectionProfile>, dark: Boolean, 
                 }
             }
         }
+        item { SectionLabel("工具与帮助") }
         item {
             OutlinedCard(onClick=onInspector,modifier=Modifier.fillMaxWidth().testTag("settings-card-inspector")) {
                 Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
@@ -383,6 +415,7 @@ private fun SettingsScreen(connections: List<ConnectionProfile>, dark: Boolean, 
                 }
             }
         }
+        item { SectionLabel("外观与阅读") }
         item {
             Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("深色模式", Modifier.weight(1f)); Switch(checked = dark, onCheckedChange = onDark)
@@ -394,13 +427,27 @@ private fun SettingsScreen(connections: List<ConnectionProfile>, dark: Boolean, 
                 }
                 Switch(checked = showTokenUsage, onCheckedChange = onShowTokenUsage, modifier = Modifier.testTag("show-token-usage").semantics { contentDescription = "显示 Token 用量" })
             }
-            HorizontalDivider()
+            Row(Modifier.fillMaxWidth().padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {Text("阅读模式");Text("收起角色回复的气泡，像阅读故事一样浏览",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+                Switch(reading.quiet,{onReading(reading.copy(quiet=it))},modifier=Modifier.testTag("quiet-reading"))
+            }
+            Row(Modifier.fillMaxWidth().padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically) {
+                Text("聊天字号",Modifier.weight(1f))
+                IconButton(onClick={onReading(reading.copy(fontSize=(reading.fontSize-1).coerceAtLeast(14)))},enabled=reading.fontSize>14) {Icon(Icons.Outlined.Remove,"减小聊天字号")}
+                Text("${reading.fontSize}",style=MaterialTheme.typography.labelLarge)
+                IconButton(onClick={onReading(reading.copy(fontSize=(reading.fontSize+1).coerceAtMost(22)))},enabled=reading.fontSize<22) {Icon(Icons.Outlined.Add,"增大聊天字号")}
+            }
+            Surface(shape=RoundedCornerShape(16.dp),color=MaterialTheme.colorScheme.surfaceContainerLow) {
+                Text("风停在窗边。故事还很长，我们慢慢聊。",Modifier.padding(16.dp),fontSize=reading.fontSize.sp,lineHeight=(reading.fontSize*1.75f).sp)
+            }
+            SectionLabel("数据与备份")
             TextButton(onClick = onBackup) { Text("导出完整备份") }
             TextButton(onClick = onImport) { Text("导入备份 / 聊天记录") }
             Text("Role Play ${BuildConfig.VERSION_NAME} · 测试版\n聊天保存在设备本地。生成时，选中的聊天上下文会发送给你配置的 API 服务商。",
                 color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(vertical = 16.dp))
         }
+    }
     }
 }
 
@@ -413,7 +460,7 @@ internal fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, conne
     onFork: (String,String?,Boolean)->Unit, onAnswer: ()->Unit,
     savedModels: Map<String,List<String>>, fetchedModels: List<String>, modelFeedback: String?, modelBusy: Boolean,
     onFetchModels: (ConnectionProfile)->Unit, onModel: (String)->Unit,
-    showTokenUsage: Boolean = true, onShowTokenUsage: (Boolean)->Unit = {}) {
+    showTokenUsage: Boolean = true, onShowTokenUsage: (Boolean)->Unit = {}, onMemory: ()->Unit = {}, summarizing: Boolean = false) {
     var menu by remember { mutableStateOf(false) }
     var choosingConnection by remember { mutableStateOf(false) }
     var choosingModel by remember(session.id) { mutableStateOf(false) }
@@ -457,13 +504,14 @@ internal fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, conne
     }
     Column(Modifier.fillMaxSize().imePadding()) {
         TopAppBar(title = {
-            Column {
-                Text(session.title, maxLines = 1)
+            Column(Modifier.clickable(enabled=!sending && activeConnection!=null) {refreshedModels=false;choosingModel=true}) {
+                Text(session.title, maxLines = 1, overflow=TextOverflow.Ellipsis, style=MaterialTheme.typography.titleMedium)
                 Text(activeConnection?.let { "${it.name} · $activeModel" } ?: "尚未选择 API",
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回") } },
             actions = {
+                IconButton(onClick=onMemory,enabled=!sending) {Icon(Icons.Outlined.AutoStories,"剧情记忆")}
                 Box {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "会话菜单") }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -477,10 +525,12 @@ internal fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, conne
                         DropdownMenuItem(text = { Text("查看聊天上下文") }, onClick = { menu = false; onPreview() })
                     }
                 }
-            })
+            }, colors=TopAppBarDefaults.topAppBarColors(containerColor=MaterialTheme.colorScheme.background))
+        HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=0.5f))
+        if(summarizing) Text("正在整理旧剧情…",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary,modifier=Modifier.padding(horizontal=20.dp,vertical=4.dp))
         Box(Modifier.weight(1f).fillMaxWidth()) {
-        LazyColumn(state = scroll, modifier = Modifier.fillMaxSize().nestedScroll(readerScroll).testTag("chat-messages"),
-            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        LazyColumn(state = scroll, modifier = Modifier.widthIn(max=800.dp).fillMaxSize().align(Alignment.TopCenter).nestedScroll(readerScroll).testTag("chat-messages"),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
             itemsIndexed(messages, key = { _, message -> message.id }) { index, message ->
                 val user = message.role == "user"
                 val depth = if (depthSensitive) messages.lastIndex - index else 0
@@ -488,10 +538,10 @@ internal fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, conne
                     Row(verticalAlignment=Alignment.CenterVertically) {
                         Text(if (user) userName else session.title, style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 5.dp, start = 4.dp, end = 4.dp))
-                        IconButton(onClick={selectedMessage=message},modifier=Modifier.size(28.dp),enabled=!sending) {Icon(Icons.Outlined.MoreHoriz,"消息操作 ${message.position}",modifier=Modifier.size(16.dp))}
+                        IconButton(onClick={selectedMessage=message},modifier=Modifier.size(48.dp),enabled=!sending) {Icon(Icons.Outlined.MoreHoriz,"消息操作 ${message.position}",modifier=Modifier.size(18.dp))}
                     }
                     Surface(shape = RoundedCornerShape(18.dp), color = if (user) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.widthIn(max = 680.dp)) {
+                        else if(LocalReadingAppearance.current.quiet) Color.Transparent else MaterialTheme.colorScheme.surface, modifier = Modifier.widthIn(max = if(user) 580.dp else 760.dp)) {
                         MessageContent(message.content, message.id, rules, message.role, depth, characterName, userName, message.status)
                     }
                     if (message.status != "complete") Text(when (message.status) {
@@ -516,9 +566,9 @@ internal fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, conne
             if(messages.last().role=="user") TextButton(onClick=onAnswer) {Text("生成回复")}
             TextButton(onClick = onContinue) { Text("续写") }
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.Bottom) {
+        Row(Modifier.widthIn(max=800.dp).fillMaxWidth().align(Alignment.CenterHorizontally).padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.Bottom) {
             OutlinedTextField(value = draft, onValueChange = onDraft, enabled = !sending, modifier = Modifier.weight(1f),
-                placeholder = { Text("说些什么，或描述你的行动…") }, maxLines = 6, shape = RoundedCornerShape(24.dp))
+                placeholder = { Text("说些什么，或描述你的行动…") }, maxLines = 6, shape = RoundedCornerShape(20.dp))
             Spacer(Modifier.width(8.dp))
             FilledIconButton(onClick = { if (sending) onStop() else { followLatest = true; onSend(draft) } },
                 enabled = sending || draft.isNotBlank(), modifier = Modifier.size(52.dp)) {

@@ -4,13 +4,16 @@ import com.moyer.roleplay.data.*
 
 data class PromptReport(val messages: List<PromptMessage>, val hits: List<String> = emptyList(),
     val warnings: List<String> = emptyList(), val trimmedMessages: Int = 0, val loreBudgetSummary: String = "",
-    val contextBudgetChars: Int = 48000) {
+    val contextBudgetChars: Int = 48000, val summarizedMessages: Int = 0, val loreDiagnostics: List<String> = emptyList(),
+    val memoryStatus: String = "") {
     fun readable() = buildString {
-        appendLine("世界书命中：${hits.size} 条；裁剪旧消息：$trimmedMessages 条")
+        appendLine("世界书命中：${hits.size} 条；裁剪旧消息：$trimmedMessages 条；摘要替代：$summarizedMessages 条")
         appendLine("估算上下文：${messages.sumOf { it.content.length }} 字符 / 约 ${messages.sumOf { estimateTokens(it.content) + 8 }} tokens（非精确计数）")
         appendLine(if (contextBudgetChars == 0) "App 上下文裁剪：不限制，保留全部有效聊天；仍受模型上下文容量限制" else "App 上下文字符预算：$contextBudgetChars 字符")
+        if(memoryStatus.isNotBlank()) appendLine(memoryStatus)
         if (loreBudgetSummary.isNotBlank()) appendLine(loreBudgetSummary)
         if (hits.isNotEmpty()) appendLine(hits.joinToString("\n"))
+        if(loreDiagnostics.isNotEmpty()) appendLine("世界书未插入原因：\n"+loreDiagnostics.joinToString("\n"))
         if (warnings.isNotEmpty()) appendLine("提示：\n" + warnings.distinct().joinToString("\n"))
         appendLine()
         messages.forEach { appendLine("[${it.role}]\n${it.content}\n") }
@@ -44,6 +47,8 @@ object PromptBuilder {
         val rules = rules(config, assets)
         val warnings = mutableListOf<String>()
         if(rules.size > 32) warnings += "已绑定超过 32 条启用正则，仅执行前 32 条"
+        val summary=if(config.builtInMemoryEnabled) StoryMemory.valid(config.storySummary,history) else null
+        if(config.builtInMemoryEnabled && config.storySummary!=null && summary==null) warnings += "剧情摘要来源已变化，本轮跳过摘要；请在剧情记忆中重新整理"
         val valid = history.filter { it.content.isNotBlank() && it.status != "failed" }
         val expander = MacroExpander(mapOf("char" to card.name, "user" to user, "description" to card.description,
             "personality" to card.personality, "scenario" to card.scenario, "persona" to config.persona,
@@ -67,10 +72,13 @@ object PromptBuilder {
             else -> "叙述视角遵循角色卡、示例对话和当前情境。用户所扮演人物以第一人称自述时称‘我’，不要机械地称自己为‘玩家’。"
         }
         val identity = "你正在进行虚构故事中的角色扮演。角色身份、性格和背景以角色卡为准。风格预设用于写法，不改变角色身份。世界书补充背景；若矛盾，优先保持角色卡中的人物事实。用户在故事中的身份称谓是 $user。‘玩家’是应用中的身份标签，不是默认人物姓名，也不是第一人称代词。$view 不要替用户决定行动或发言。"
-        data class Segment(val role: String="system", val raw: String="", val history: Boolean=false, val examples: Boolean=false)
+        data class Segment(val role: String="system", val raw: String="", val history: Boolean=false, val examples: Boolean=false,
+            val expandMacros: Boolean=true)
         data class Insertion(val role: String, val raw: String, val depth: Int, val order: Int=100)
         val segments=mutableListOf(Segment(raw=identity))
-        if(config.memory.isNotBlank()) segments += Segment(raw="固定剧情记忆（可修订的剧情事实）：\n${config.memory}")
+        // Memory is factual data, not a preset program. Never execute its variable macros.
+        if(config.builtInMemoryEnabled && config.memory.isNotBlank()) segments += Segment(raw="固定剧情记忆（可修订的剧情事实）：\n${config.memory}",expandMacros=false)
+        if(summary!=null) segments += Segment(raw="此前剧情摘要（来源：第1～${summary.throughPosition+1}条中的${summary.sourceCount}条完整消息；可修订，以固定记忆和近期明确事实为准）：\n${summary.text}",expandMacros=false)
         val sortedLore=lore.entries.sortedBy { it.entry.order }
         fun loreText(position: String) = sortedLore.filter { it.entry.position==position }.joinToString("\n") { it.content }
         fun loreSegments(position: String) = sortedLore.filter { it.entry.position==position }.map { Segment(it.entry.role,"世界书背景：\n${it.content}") }
@@ -126,12 +134,13 @@ object PromptBuilder {
             segments += Segment(history=true)
         }
         // Expand in relative prompt order. Variables are reset for each request.
-        val expanded=segments.map { segment -> if(segment.history) segment else segment.copy(raw=expander.expand(segment.raw)) }
+        val expanded=segments.map { segment -> if(segment.history || !segment.expandMacros) segment else segment.copy(raw=expander.expand(segment.raw)) }
         val expandedDepth=depth.map { it.copy(raw=expander.expand(it.raw)) }.filter { it.raw.isNotBlank() }
         val fixed=expanded.filter { !it.history }.sumOf { it.raw.length } + expandedDepth.sumOf { it.raw.length } + style?.newChatPrompt.orEmpty().length
         val unlimited = config.historyBudgetChars == 0
         require(unlimited || fixed < config.historyBudgetChars) { "角色与固定资料超过上下文字符预算，请减少资料或在会话设定中提高预算" }
-        val recent=valid
+        val recent=if(config.compactSummaryHistory && summary!=null) valid.filter {it.position>summary.throughPosition || it.status!="complete"} else valid
+        val summarized=valid.size-recent.size
         var available=if (unlimited) Long.MAX_VALUE else config.historyBudgetChars.toLong()-fixed
         val dialogue=mutableListOf<PromptMessage>()
         for(index in recent.indices.reversed()) {
@@ -160,7 +169,9 @@ object PromptBuilder {
         }
         require(unlimited || result.sumOf { it.content.length.toLong() } <= config.historyBudgetChars) { "宏或示例展开后超出上下文预算，请减少资料或提高预算" }
         if(config.references().any { id -> assets.none { it.id==id } }) warnings += "有绑定资料未找到，已跳过；可重新选择资料"
-        return PromptReport(result,lore.entries.map { "${it.bookName} / ${it.entry.name}（${it.reason}）" },(warnings+expander.warnings).distinct(),valid.size-dialogue.size,lore.budgetSummary,config.historyBudgetChars)
+        val memoryStatus=if(!config.builtInMemoryEnabled) "内置剧情记忆：已暂停；不发送固定记忆与摘要，不以摘要替代历史。导入资料照常处理。"
+            else "内置剧情记忆：已启用；固定记忆${if(config.memory.isBlank()) "为空" else "已发送"}，${if(summary==null) "无有效摘要" else "摘要已发送"}。"
+        return PromptReport(result,lore.entries.map { "${it.bookName} / ${it.entry.name}（${it.reason}）" },(warnings+expander.warnings).distinct(),recent.size-dialogue.size,lore.budgetSummary,config.historyBudgetChars,summarized,lore.diagnostics,memoryStatus)
     }
 
     private fun exampleMessages(text: String, char: String, user: String, template: String, expander: MacroExpander): List<PromptMessage> {
@@ -185,7 +196,7 @@ object PromptBuilder {
     }
 
     private data class Hit(val bookId: String,val bookName: String,val entry: LoreEntry,val content: String,val reason: String)
-    private data class LoreResult(val entries: List<Hit>,val warnings: List<String>,val budgetSummary: String)
+    private data class LoreResult(val entries: List<Hit>,val warnings: List<String>,val budgetSummary: String,val diagnostics: List<String>)
     private fun selectLore(config: RoleplayConfig,assets: List<ResourceAsset>,history: List<ChatMessage>,card: CharacterCard,userName: String,
         transform: (String)->String): LoreResult {
         val charName=card.name
@@ -195,6 +206,10 @@ object PromptBuilder {
         val follows = books.associate { (asset, book) -> asset.id to asset.followsSessionLoreBudget(book) }
         val hits = mutableListOf<Hit>();val warnings = mutableListOf<String>();val seen=mutableSetOf<String>()
         val historySeed=history.takeLast(100).fold(1) { hash,message -> 31 * hash + message.content.hashCode() }
+        val diagnostics=linkedMapOf<String,String>()
+        config.lorebookIds.mapNotNull {id -> assets.firstOrNull {it.id==id && it.kind=="lorebook" && !it.enabled}}.forEach {
+            diagnostics[it.id]="${it.name}：整本世界书已停用"
+        }
         var total=0; val perBook=mutableMapOf<String,Int>();val deadline=System.nanoTime()+1_000_000_000
         fun result() = LoreResult(hits,warnings,buildString {
             append("世界书会话预算：$total / ${config.loreBudget} 估算 tokens")
@@ -202,7 +217,7 @@ object PromptBuilder {
                 append("\n${asset.name}：${perBook[asset.id] ?: 0} / ${limits.getValue(asset.id)}，")
                 append(if(follows.getValue(asset.id)) "跟随会话预算" else "本书独立上限")
             }
-        })
+        },diagnostics.values.take(256)+if(diagnostics.size>256) listOf("另有${diagnostics.size-256}条诊断未展开；请缩小绑定范围查看") else emptyList())
         fun matches(key: String,text: String,sensitive: Boolean,whole: Boolean): Boolean {
             val expanded=key.replace("{{char}}",charName).replace("{{user}}",userName)
             if(expanded.startsWith('/')) return RegexEngine.matches(expanded,text)
@@ -223,7 +238,12 @@ object PromptBuilder {
             val candidates = mutableListOf<Hit>()
             for((asset,book) in books) for(entry in book.entries) {
                 if (System.nanoTime()>deadline) {warnings+="世界书扫描达到时间预算，剩余条目未扫描";return result()}
-                if(!entry.enabled || entry.probability == 0 || "${asset.id}:${entry.id}" in seen || (pass>0 && (!book.recursive || entry.excludeRecursion))) continue
+                val entryKey="${asset.id}:${entry.id}"
+                fun omitted(reason: String) {diagnostics[entryKey]="${asset.name} / ${entry.name}：$reason"}
+                if(entryKey in seen || (pass>0 && (!book.recursive || entry.excludeRecursion))) continue
+                if(!entry.enabled) {omitted("条目已停用");continue}
+                if(entry.probability==0) {omitted("触发概率为0%");continue}
+                if(entry.content.isBlank()) {omitted("条目内容为空");continue}
                 val depth=entry.scanDepth ?: config.scanDepth.takeUnless { it==4 } ?: book.scanDepth
                 val extra=listOfNotNull(config.persona.takeIf { entry.matchPersona },card.description.takeIf { entry.matchDescription },
                     card.personality.takeIf { entry.matchPersonality },card.scenario.takeIf { entry.matchScenario }).joinToString("\n")
@@ -234,9 +254,11 @@ object PromptBuilder {
                 val filter=entry.constant || !entry.selective || secondary.isEmpty() || when(entry.logic) {
                     "and_all"->secondary.all{it};"not_any"->secondary.none{it};"not_all"->!secondary.all{it};else->secondary.any{it}
                 }
+                if(!primary) omitted("关键词未命中（扫描最近${depth}条消息${if(entry.matchWholeWords) "，按整词匹配" else ""}${if(extra.isNotBlank()) "，含选定的角色/身份字段" else ""}）")
+                else if(!filter) omitted("辅助关键词条件未满足：${entry.logic}")
                 if(primary && filter && entry.content.isNotBlank()) {
                     val seed=31 * (asset.id+entry.id).hashCode()+historySeed
-                    if(kotlin.random.Random(seed).nextInt(100) >= entry.probability) { seen+="${asset.id}:${entry.id}"; continue }
+                    if(kotlin.random.Random(seed).nextInt(100) >= entry.probability) { seen+=entryKey;omitted("本轮未通过${entry.probability}%概率判断");continue }
                     candidates += Hit(asset.id,asset.name,entry,transform(entry.content),
                     if(entry.constant) "常驻" else if(pass==0) "关键词" else "递归")
                 }
@@ -252,7 +274,8 @@ object PromptBuilder {
                     if(used+count>bookLimit && !follows.getValue(hit.bookId))
                         add("本书预算不足（已用 $used / $bookLimit）；可在资料库调整或启用“跟随会话预算”")
                 }
-                if(reasons.isNotEmpty()) warnings += "${hit.bookName} / ${hit.entry.name}：已触发，需约 $count tokens；${reasons.joinToString("；")}，未插入"
+                diagnostics.remove("${hit.bookId}:${hit.entry.id}")
+                if(reasons.isNotEmpty()) {diagnostics["${hit.bookId}:${hit.entry.id}"]="${hit.bookName} / ${hit.entry.name}：已触发；${reasons.joinToString("；")}";warnings += "${hit.bookName} / ${hit.entry.name}：已触发，需约 $count tokens；${reasons.joinToString("；")}，未插入"}
                 else {hits+=hit;total+=count;perBook[hit.bookId]=(perBook[hit.bookId]?:0)+count;added++}
             }
             if(added==0) break

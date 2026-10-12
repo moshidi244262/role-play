@@ -40,6 +40,7 @@ internal fun MessageContent(text: String, messageId: String, rules: List<TextRul
 
 @Composable
 private fun MessageBlocks(blocks: List<MessageBlock>, path: String) {
+    val reading=LocalReadingAppearance.current
     blocks.forEachIndexed { index, block ->
         when (block) {
             is MessageBlock.Paragraph -> SelectionContainer {
@@ -49,7 +50,7 @@ private fun MessageBlocks(blocks: List<MessageBlock>, path: String) {
                         fontStyle = if (run.italic) FontStyle.Italic else null,
                         fontFamily = if (run.code) FontFamily.Monospace else null
                     )) { append(run.text) } }
-                }, lineHeight = 25.sp)
+                }, fontSize=reading.fontSize.sp, lineHeight=(reading.fontSize*1.75f).sp)
             }
             is MessageBlock.Disclosure -> {
                 var expanded by rememberSaveable("$path/$index") { mutableStateOf(block.open) }

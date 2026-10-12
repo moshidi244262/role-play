@@ -6,11 +6,15 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
+data class SessionPreview(val sessionId: String, val content: String)
+
 @Dao
 abstract class RolePlayDao {
     @Query("SELECT * FROM characters ORDER BY updatedAt DESC") abstract fun characters(): Flow<List<CharacterCard>>
     @Query("SELECT * FROM connections ORDER BY name") abstract fun connections(): Flow<List<ConnectionProfile>>
     @Query("SELECT * FROM sessions ORDER BY updatedAt DESC") abstract fun sessions(): Flow<List<ChatSession>>
+    @Query("SELECT s.id AS sessionId, COALESCE((SELECT substr(m.content,1,1000) FROM messages m WHERE m.sessionId=s.id AND m.content != '' AND m.status != 'failed' ORDER BY m.position DESC LIMIT 1),'') AS content FROM sessions s")
+    abstract fun sessionPreviews(): Flow<List<SessionPreview>>
     @Query("SELECT id FROM resources ORDER BY updatedAt DESC") protected abstract fun resourceChanges(): Flow<List<String>>
     @Query("SELECT * FROM resources ORDER BY updatedAt DESC") protected abstract suspend fun resourceRows(): List<ResourceAsset>
     @Query("SELECT * FROM resource_text_parts ORDER BY resourceId, field, part") protected abstract suspend fun resourceParts(): List<ResourceTextPart>

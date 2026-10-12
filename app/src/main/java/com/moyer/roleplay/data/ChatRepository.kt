@@ -57,15 +57,17 @@ class ChatRepository(val database: AppDatabase) {
         val index=history.indexOfFirst {it.id==messageId}
         require(index>=0) {"消息不存在"}
         require(!before || (index>0 && history[index-1].role=="user")) {"这条回复没有可重新回答的玩家消息"}
-        val fork=source.copy(id=newId(),title=source.title.substringBefore(" · 分支")+" · 分支",draft="",createdAt=System.currentTimeMillis(),updatedAt=System.currentTimeMillis())
-        dao.insertSession(fork)
-        history.take(if(before) index else index+1).forEach {message->
+        val copied=history.take(if(before) index else index+1).map {message ->
             val edited=message.id==messageId && editedText!=null
-            dao.insertMessage(message.copy(id=newId(),sessionId=fork.id,
-                content=if(edited) editedText!! else message.content,
+            message.copy(id=newId(),content=if(edited) editedText!! else message.content,
                 status=if(edited) "complete" else if(message.status=="streaming") "interrupted" else message.status,
-                inputTokens=if(edited) null else message.inputTokens,outputTokens=if(edited) null else message.outputTokens,cachedTokens=if(edited) null else message.cachedTokens))
+                inputTokens=if(edited) null else message.inputTokens,outputTokens=if(edited) null else message.outputTokens,cachedTokens=if(edited) null else message.cachedTokens)
         }
+        val config=readConfig(source.config)
+        val fork=source.copy(id=newId(),title=source.title.substringBefore(" · 分支")+" · 分支",draft="",
+            config=config.copy(storySummary=StoryMemory.valid(config.storySummary,copied)).json(),createdAt=System.currentTimeMillis(),updatedAt=System.currentTimeMillis())
+        dao.insertSession(fork)
+        copied.forEach {dao.insertMessage(it.copy(sessionId=fork.id))}
         fork.id
     }
 

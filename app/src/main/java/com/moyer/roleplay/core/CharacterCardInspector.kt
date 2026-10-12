@@ -95,6 +95,16 @@ object CharacterCardInspector {
             append("\n以下是卡片保存的原始内容，包含未启用条目和扩展；资料库中的后续修改请在资料库查看。")
             append("\n仅解析文字，不执行卡片脚本；密钥和密码字段已移除。")
         }
+        val compatibility=runCatching {CommunityImporter.decode(root.toString().toByteArray(Charsets.UTF_8),"$name.json")}
+        val report=compatibility.fold(onSuccess={pack -> buildString {
+            appendLine("已转换：角色常用字段、开场白、示例对话、备选开场白")
+            appendLine("关联资料：${pack.resources.count {it.kind=="lorebook"}}本世界书、${pack.resources.count {it.kind=="preset"}}份角色提示、${pack.resources.count {it.kind=="regex"}}份正则")
+            appendLine("聊天显示：支持文本、加粗、斜体、基础表格和折叠状态栏；原始CSS布局不会完整复现")
+            appendLine("扩展执行：酒馆助手、MVU、STscript和任意JavaScript保留原文，当前不执行")
+            if(pack.warnings.isNotEmpty()) {appendLine("该卡片的转换提示：");pack.warnings.forEach {appendLine("• $it")}}
+            appendLine("解析成功不代表所有扩展已经生效；实际发送内容请在聊天上下文中查看。")
+        }},onFailure={"原文读取成功，但兼容转换未通过：${(it as? IllegalArgumentException)?.message ?: "资料格式需要检查"}。请先修正文件后再导入。"})
+        sections.add(0,CardTextSection("兼容性报告",report))
         val pretty = Json { prettyPrint=true }.encodeToString(JsonElement.serializer(),root)
         return CardInspection(name,summary,sections,pretty)
     }

@@ -16,6 +16,14 @@ object MessageMarkup {
     private val tag = Regex("</?[a-zA-Z][\\w:-]*(?:\\s|/?>)")
     private val boundaries = setOf("div", "p", "section", "article", "header", "footer", "blockquote", "pre", "ul", "ol", "table", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "hr")
 
+    fun preview(raw: String): String {
+        fun flatten(blocks: List<MessageBlock>): List<String> = blocks.flatMap { block -> when(block) {
+            is MessageBlock.Paragraph -> listOf(block.runs.joinToString("") {it.text})
+            is MessageBlock.Disclosure -> listOf(block.title) + flatten(block.children)
+        } }
+        return flatten(parse(raw.take(2000))).joinToString(" ").replace(Regex("\\s+")," ").take(220).trim()
+    }
+
     fun parse(raw: String): List<MessageBlock> {
         if (!tag.containsMatchIn(raw)) return listOf(MessageBlock.Paragraph(listOf(MessageRun(raw))))
         var source = raw.take(500_000).replace(Regex("(?m)^\\s*```(?:html)?\\s*$"), "")

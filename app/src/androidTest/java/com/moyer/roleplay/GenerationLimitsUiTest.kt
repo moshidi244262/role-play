@@ -20,11 +20,12 @@ class GenerationLimitsUiTest {
         var saved: RoleplayConfig? = null
         compose.setContent { MaterialTheme { ConfigEditor(RoleplayConfig(historyBudgetChars=90000),emptyList(),"会话设定",{}, {saved=it}) } }
         compose.onNodeWithText("上下文与扫描选项").performScrollTo().performClick()
-        compose.onNode(isToggleable()).performScrollTo().performClick()
+        compose.onNodeWithTag("unlimited-context").performScrollTo().performClick()
         compose.onNodeWithText("上下文字符预算").assertDoesNotExist()
         compose.onNodeWithText("保存").performClick()
         assertEquals(0,saved!!.historyBudgetChars)
-        compose.onNode(isToggleable()).performScrollTo().performClick()
+        assertTrue(saved!!.builtInMemoryEnabled)
+        compose.onNodeWithTag("unlimited-context").performScrollTo().performClick()
         compose.onNodeWithText("上下文字符预算").performScrollTo().assertTextContains("90000")
         compose.onNodeWithText("保存").performClick()
         assertEquals(90000,saved!!.historyBudgetChars)
