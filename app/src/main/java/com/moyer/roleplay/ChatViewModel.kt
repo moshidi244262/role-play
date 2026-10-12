@@ -47,6 +47,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }.getOrDefault(emptyMap()))
     val connectionFeedback = MutableStateFlow<String?>(null)
     val darkMode = MutableStateFlow(preferences.getBoolean("dark", false))
+    val showTokenUsage = MutableStateFlow(preferences.getBoolean("show_token_usage", true))
     val drafts = MutableStateFlow<Map<String, String>>(emptyMap())
 
     init {
@@ -70,6 +71,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         preferences.edit().putBoolean("dark", value).apply()
     }
 
+    fun setShowTokenUsage(value: Boolean) {
+        showTokenUsage.value = value
+        preferences.edit().putBoolean("show_token_usage", value).apply()
+    }
+
     fun newChat(card: CharacterCard, greeting: String? = null) = viewModelScope.launch {
         safe { openChat(repository.createSession(card, connections.value.firstOrNull()?.id, greeting)) }
     }
@@ -81,7 +87,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val greetings=appJson.decodeFromString<List<String>>(card.alternateGreetings)
             require(greetings.size<=100 && greetings.all {it.length<=32000}) {"备选开场白超出限制"}
             dao.saveCharacter(card.copy(name = card.name.trim(), updatedAt = System.currentTimeMillis()))
-            notice.value = "角色已保存；已有会话继续使用原角色快照"
+            notice.value = "角色已保存；头像同步到会话列表，已有剧情设定保留"
         }
     }
 

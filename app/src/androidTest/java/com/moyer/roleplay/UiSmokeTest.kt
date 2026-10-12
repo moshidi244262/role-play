@@ -81,6 +81,27 @@ class UiSmokeTest {
         screenshot("04-library")
     }
 
+    @Test fun tokenSettingPersistsForFreshViewModelAndActivity() {
+        compose.runOnUiThread { vm.setShowTokenUsage(true) }
+        compose.onNodeWithText("设置").performClick()
+        compose.onNodeWithTag("show-token-usage").performScrollTo().assertIsOn().performClick()
+        compose.onNodeWithTag("show-token-usage").assertIsOff()
+        val store = androidx.lifecycle.ViewModelStore()
+        try {
+            compose.runOnUiThread {
+                val fresh = ViewModelProvider(store, ViewModelProvider.AndroidViewModelFactory(compose.activity.application))[ChatViewModel::class.java]
+                org.junit.Assert.assertFalse(fresh.showTokenUsage.value)
+            }
+            compose.activityRule.scenario.recreate()
+            compose.waitUntil(10000) { compose.onAllNodesWithText("设置").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("设置").performClick()
+            compose.onNodeWithTag("show-token-usage").performScrollTo().assertIsOff()
+            screenshot("06-token-setting")
+        } finally {
+            compose.runOnUiThread { store.clear(); vm.setShowTokenUsage(true) }
+        }
+    }
+
     @Test fun pngCardImportPreviewCreatesCharacterAvatarAndBoundLore() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val json="""{"spec":"chara_card_v2","data":{"name":"导入验证角色","description":"高塔守卫","first_mes":"你来到了高塔。","character_book":{"entries":[{"keys":["高塔"],"content":"塔楼编号是 T-09。","enabled":true}]}}}"""

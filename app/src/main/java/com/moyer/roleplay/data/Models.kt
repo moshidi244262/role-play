@@ -19,6 +19,7 @@ data class CharacterCard(
     @ColumnInfo(defaultValue = "'{}'") val config: String = "{}",
     @ColumnInfo(defaultValue = "''") val sourceJson: String = "",
     @ColumnInfo(defaultValue = "''") val avatar: String = "",
+    @ColumnInfo(defaultValue = "''") val customAvatar: String = "",
     @ColumnInfo(defaultValue = "'[]'") val alternateGreetings: String = "[]",
     val updatedAt: Long = System.currentTimeMillis()
 )

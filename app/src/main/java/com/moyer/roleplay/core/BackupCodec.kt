@@ -56,7 +56,8 @@ object BackupCodec {
         val connectionIds = bundle.connections.map { it.id }.toSet()
         val sessionIds = bundle.sessions.map { it.id }.toSet()
         fun card(value: CharacterCard) {
-            require(value.name.isNotBlank() && value.name.length<=200 && value.avatar.length<=4*1024*1024) {"角色名称或头像无效"}
+            require(value.name.isNotBlank() && value.name.length<=200 && value.avatar.length<=4*1024*1024 &&
+                value.customAvatar.length<=4*1024*1024) {"角色名称或头像无效"}
             val greetings=try {appJson.decodeFromString<List<String>>(value.alternateGreetings)}
                 catch(_: Exception) {throw IllegalArgumentException("角色备选开场白格式无效")}
             require(greetings.size<=100 && greetings.all {it.length<=32000}) {"角色备选开场白超出限制"}

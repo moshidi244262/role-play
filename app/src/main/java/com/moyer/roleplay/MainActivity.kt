@@ -6,13 +6,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.compose.foundation.background
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.rememberScrollState
@@ -28,11 +27,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -44,7 +39,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.moyer.roleplay.data.*
@@ -74,6 +68,7 @@ private val navigation = listOf(NavItem("会话", Icons.Outlined.ChatBubbleOutli
 @Composable
 fun RolePlayApp(vm: ChatViewModel = viewModel()) {
     val dark by vm.darkMode.collectAsStateWithLifecycle()
+    val showTokenUsage by vm.showTokenUsage.collectAsStateWithLifecycle()
     val colors = if (dark) darkColorScheme(primary = Color(0xFFBFB1FF), secondary = Color(0xFFA9C8C8),
         background = Color(0xFF15141C), surface = Color(0xFF1C1B25))
     else lightColorScheme(primary = Color(0xFF7463C9), secondary = Color(0xFF537E80),
@@ -157,8 +152,9 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
                         savedModels = savedModels, fetchedModels = modelChoices, modelFeedback = connectionFeedback, modelBusy = operationBusy,
                         onFetchModels = { vm.modelChoices.value = savedModels[it.id].orEmpty(); vm.fetchModels(it, "") },
                         onModel = { vm.selectModel(session.id, it) },
+                        showTokenUsage = showTokenUsage, onShowTokenUsage = vm::setShowTokenUsage,
                         onPreview = { scope.launch { runCatching { vm.promptPreview(session.id) }.onSuccess { preview = it }.onFailure {vm.notice.value="上下文无法组装，请检查会话预算与资料"} } })
-                    tab == 0 -> SessionScreen(sessions, vm::openChat, { deleting = it }, { tab = 1 },
+                    tab == 0 -> SessionScreen(sessions, cards, vm::openChat, { deleting = it }, { tab = 1 },
                         { importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) })
                     tab == 1 -> CharacterScreen(cards, { editCharacter = CharacterCard(name = "") }, ::importFile,
                         {exportCard=it;cardExporter.launch("roleplay-character.json")},
@@ -169,7 +165,7 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
                         editingAsset=ResourceAsset(kind=kind,name="",payload=when(kind) {"lorebook"->appJson.encodeToString(LoreBook());"preset"->appJson.encodeToString(StylePreset());else->appJson.encodeToString(RegexRules())})
                     },{editingAsset=it},vm::toggleResource,{deletingAsset=it},{exportAsset=it;assetExporter.launch("roleplay-${it.kind}.json")},
                         {exportJson(null)},{editingDefaults=true})
-                    else -> SettingsScreen(connections, dark, { vm.setDark(it) },
+                    else -> SettingsScreen(connections, dark, { vm.setDark(it) }, showTokenUsage, vm::setShowTokenUsage,
                         { editConnection = ProviderTemplates.all.first().copy(id = newId()) }, { editConnection = it },
                         { exportJson(null) }, { importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) })
                 }
@@ -230,28 +226,10 @@ private fun PageHeading(title: String, subtitle: String, action: @Composable (()
 }
 
 @Composable
-private fun Avatar(name: String,avatar: String="") {
-    val bitmap=remember(avatar) { runCatching {
-        if(avatar.isBlank() || avatar.length>4*1024*1024) null else {
-            val bytes=android.util.Base64.decode(avatar,android.util.Base64.DEFAULT)
-            val bounds=android.graphics.BitmapFactory.Options().apply {inJustDecodeBounds=true}
-            android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.size,bounds)
-            var sample=1
-            while(bounds.outWidth/sample>128 || bounds.outHeight/sample>128) sample*=2
-            android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.size,android.graphics.BitmapFactory.Options().apply {inSampleSize=sample})?.asImageBitmap()
-        }
-    }.getOrNull() }
-    if(bitmap!=null) {Image(bitmap,contentDescription=name,modifier=Modifier.size(48.dp).clip(CircleShape),contentScale=ContentScale.Crop);return}
-    Box(Modifier.size(48.dp).background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primaryContainer,
-        MaterialTheme.colorScheme.secondaryContainer)), CircleShape), contentAlignment = Alignment.Center) {
-        Text(name.take(1).ifBlank { "角" }, fontSize = 22.sp, fontWeight = FontWeight.Medium)
-    }
-}
-
-@Composable
-private fun SessionScreen(sessions: List<ChatSession>, onOpen: (String) -> Unit, onDelete: (ChatSession) -> Unit,
+internal fun SessionScreen(sessions: List<ChatSession>, cards: List<CharacterCard>, onOpen: (String) -> Unit, onDelete: (ChatSession) -> Unit,
     onNew: () -> Unit, onImport: () -> Unit) {
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    val cardsById = remember(cards) { cards.associateBy { it.id } }
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp).testTag("sessions"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { PageHeading("会话", "故事保存在这里，随时接着聊") {
             FilledTonalIconButton(onClick = onNew) { Icon(Icons.Outlined.Add, "新建会话") }
         } }
@@ -262,7 +240,8 @@ private fun SessionScreen(sessions: List<ChatSession>, onOpen: (String) -> Unit,
         items(sessions, key = { it.id }) { session ->
             ElevatedCard(onClick = { onOpen(session.id) }, modifier = Modifier.fillMaxWidth()) {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Avatar(session.title)
+                    val avatar = remember(session.characterSnapshot, cardsById[session.characterId]) { sessionAvatar(session, cardsById[session.characterId]) }
+                    CharacterAvatar(session.title, avatar, Modifier.testTag("session-avatar-${session.id}"))
                     Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
                         Text(session.title, fontWeight = FontWeight.SemiBold)
                         Text(SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(session.updatedAt)),
@@ -301,7 +280,7 @@ private fun CharacterScreen(cards: List<CharacterCard>, onNew: () -> Unit, onImp
             ElevatedCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(18.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Avatar(card.name,card.avatar)
+                        CharacterAvatar(card.name, card.displayAvatar(), Modifier.testTag("character-avatar-${card.id}"))
                         Column(Modifier.weight(1f).padding(start = 14.dp)) {
                             Text(card.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                             Text(card.personality.ifBlank { "自定义角色" }, maxLines = 2,
@@ -333,6 +312,7 @@ private fun EmptyPanel(title: String, detail: String, action: (() -> Unit)? = nu
 
 @Composable
 private fun SettingsScreen(connections: List<ConnectionProfile>, dark: Boolean, onDark: (Boolean) -> Unit,
+    showTokenUsage: Boolean, onShowTokenUsage: (Boolean) -> Unit,
     onNew: () -> Unit, onEdit: (ConnectionProfile) -> Unit, onBackup: () -> Unit, onImport: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { PageHeading("设置", "连接模型，调整你的使用方式") }
@@ -356,10 +336,17 @@ private fun SettingsScreen(connections: List<ConnectionProfile>, dark: Boolean, 
             Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("深色模式", Modifier.weight(1f)); Switch(checked = dark, onCheckedChange = onDark)
             }
+            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("显示 Token 用量")
+                    Text("在聊天回复下显示输入、输出与缓存用量", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = showTokenUsage, onCheckedChange = onShowTokenUsage, modifier = Modifier.testTag("show-token-usage").semantics { contentDescription = "显示 Token 用量" })
+            }
             HorizontalDivider()
             TextButton(onClick = onBackup) { Text("导出完整备份") }
             TextButton(onClick = onImport) { Text("导入备份 / 聊天记录") }
-            Text("Role Play 0.3.0 · 测试版\n聊天保存在设备本地。生成时，选中的聊天上下文会发送给你配置的 API 服务商。",
+            Text("Role Play 0.3.1 · 测试版\n聊天保存在设备本地。生成时，选中的聊天上下文会发送给你配置的 API 服务商。",
                 color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(vertical = 16.dp))
         }
@@ -374,7 +361,8 @@ internal fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, conne
     onExportJson: () -> Unit, onExportText: () -> Unit, onConfig: ()->Unit, onPreview: () -> Unit,
     onFork: (String,String?,Boolean)->Unit, onAnswer: ()->Unit,
     savedModels: Map<String,List<String>>, fetchedModels: List<String>, modelFeedback: String?, modelBusy: Boolean,
-    onFetchModels: (ConnectionProfile)->Unit, onModel: (String)->Unit) {
+    onFetchModels: (ConnectionProfile)->Unit, onModel: (String)->Unit,
+    showTokenUsage: Boolean = true, onShowTokenUsage: (Boolean)->Unit = {}) {
     var menu by remember { mutableStateOf(false) }
     var choosingConnection by remember { mutableStateOf(false) }
     var choosingModel by remember(session.id) { mutableStateOf(false) }
@@ -430,6 +418,8 @@ internal fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, conne
                         DropdownMenuItem(text = { Text("选择 API 连接") }, onClick = { menu = false; choosingConnection = true }, enabled = !sending)
                         DropdownMenuItem(text = { Text("切换当前会话模型") }, onClick = { menu = false; refreshedModels = false; choosingModel = true }, enabled = !sending && activeConnection != null)
                         DropdownMenuItem(text = { Text("会话设定：资料与玩家身份") }, onClick = {menu=false;onConfig()},enabled=!sending)
+                        DropdownMenuItem(text = { Text(if (showTokenUsage) "隐藏 Token 用量" else "显示 Token 用量") },
+                            onClick = { menu = false; onShowTokenUsage(!showTokenUsage) })
                         DropdownMenuItem(text = { Text("导出可恢复记录（JSON）") }, onClick = { menu = false; onExportJson() })
                         DropdownMenuItem(text = { Text("导出阅读文本（TXT）") }, onClick = { menu = false; onExportText() })
                         DropdownMenuItem(text = { Text("查看聊天上下文") }, onClick = { menu = false; onPreview() })
@@ -461,15 +451,15 @@ internal fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, conne
                         else -> "生成失败 · 可重新发送或续写"
                     }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 5.dp))
-                    if(message.inputTokens!=null || message.outputTokens!=null) Text("用量 ${message.inputTokens ?: "—"} / ${message.outputTokens ?: "—"} tokens" +
+                    if(showTokenUsage && (message.inputTokens!=null || message.outputTokens!=null)) Text("用量 ${message.inputTokens ?: "—"} / ${message.outputTokens ?: "—"} tokens" +
                         (message.cachedTokens?.let {" · 缓存命中 $it"} ?: ""),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             item(key = "latest-edge") { Spacer(Modifier.height(1.dp)) }
         }
-        if (!followLatest) FilledTonalButton(onClick = {
+        if (!followLatest) FilledTonalIconButton(onClick = {
             followLatest = true; scope.launch { scroll.scrollToItem(messages.size) }
-        }, modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp).testTag("back-to-latest")) { Text("回到最新") }
+        }, modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp).size(48.dp).testTag("back-to-latest")) { Icon(Icons.Outlined.ArrowDownward, "回到最新") }
         }
         if (!sending && messages.isNotEmpty()) Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp), horizontalArrangement = Arrangement.End) {
             if(messages.last().role=="user") TextButton(onClick=onAnswer) {Text("生成回复")}
@@ -527,9 +517,34 @@ private fun CharacterEditor(card: CharacterCard, resources: List<ResourceAsset>,
     var examples by remember(card.id) { mutableStateOf(card.exampleDialogue) }
     var config by remember(card.id) {mutableStateOf(readConfig(card.config))}
     var bindings by remember {mutableStateOf(false)}
+    var customAvatar by remember(card.id) { mutableStateOf(card.customAvatar) }
+    var avatarLoading by remember(card.id) { mutableStateOf(false) }
+    var avatarError by remember(card.id) { mutableStateOf<String?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            avatarLoading = true; avatarError = null
+            scope.launch {
+                try { customAvatar = AvatarImages.fromGallery(context, uri) }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) { avatarError = (e as? IllegalArgumentException)?.message ?: "图片无法读取，请重新选择" }
+                finally { avatarLoading = false }
+            }
+        }
+    }
     var alternates by remember(card.id) {mutableStateOf(appJson.decodeFromString<List<String>>(card.alternateGreetings).joinToString("\n---\n"))}
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("角色设定") }, text = {
+    AlertDialog(onDismissRequest = { if (!avatarLoading) onDismiss() }, title = { Text("角色设定") }, text = {
         Column(Modifier.heightIn(max = 500.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            CharacterAvatar(name, customAvatar.ifBlank { card.avatar }, Modifier.align(Alignment.CenterHorizontally).testTag("avatar-preview"))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                TextButton(enabled = !avatarLoading, onClick = { avatarPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
+                    Text(if (avatarLoading) "正在读取图片…" else "从图库选择头像")
+                }
+                if (customAvatar.isNotBlank()) TextButton(enabled = !avatarLoading, onClick = { customAvatar = ""; avatarError = null }) { Text("恢复默认头像") }
+            }
+            Text("头像用于角色库和会话列表。聊天正文不显示头像。", style = MaterialTheme.typography.bodySmall)
+            avatarError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             EditorField("角色名称", name, { name = it }, true)
             EditorField("描述与背景", description, { description = it })
             EditorField("性格", personality, { personality = it })
@@ -540,10 +555,10 @@ private fun CharacterEditor(card: CharacterCard, resources: List<ResourceAsset>,
             TextButton(onClick={bindings=true}) {Text("绑定世界书、预设与正则（${config.references().size} 份）")}
             Text("已有会话保留原设定。修改后的角色用于新会话。", style = MaterialTheme.typography.bodySmall)
         }
-    }, confirmButton = { TextButton(enabled = name.isNotBlank(), onClick = {
+    }, confirmButton = { TextButton(enabled = name.isNotBlank() && !avatarLoading, onClick = {
         onSave(card.copy(name = name, description = description, personality = personality, scenario = scenario,
-            greeting = greeting, exampleDialogue = examples,config=config.json(),alternateGreetings=appJson.encodeToString(alternates.split("\n---\n").map {it.trim()}.filter(String::isNotBlank))))
-    }) { Text("保存") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
+            greeting = greeting, exampleDialogue = examples, customAvatar = customAvatar,config=config.json(),alternateGreetings=appJson.encodeToString(alternates.split("\n---\n").map {it.trim()}.filter(String::isNotBlank))))
+    }) { Text("保存") } }, dismissButton = { TextButton(enabled = !avatarLoading, onClick = onDismiss) { Text("取消") } })
     if(bindings) ConfigEditor(config,resources,"角色绑定（用于新会话）",{bindings=false}) {config=it;bindings=false}
 }
 
