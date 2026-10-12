@@ -138,7 +138,7 @@ fun ConfigEditor(initial: RoleplayConfig,assets: List<ResourceAsset>,title: Stri
                 NumberField("作者注释深度（距最新消息）",config.authorDepth) {config=config.copy(authorDepth=it)}
                 NumberField("世界书扫描最近消息数",config.scanDepth) {config=config.copy(scanDepth=it)}
                 NumberField("世界书预算（估算 tokens）",config.loreBudget) {config=config.copy(loreBudget=it)}
-                resources.filter {it.kind=="lorebook" && it.id in config.lorebookIds && it.enabled}.forEach {asset ->
+                assets.filter {it.kind=="lorebook" && it.id in config.lorebookIds && it.enabled}.forEach {asset ->
                     val book=appJson.decodeFromString<LoreBook>(asset.payload)
                     Text("${asset.name}：" + if(asset.followsSessionLoreBudget(book)) "跟随会话预算" else "本书另有限额 ${book.budget} tokens；可在资料库调整",style=MaterialTheme.typography.bodySmall)
                 }
