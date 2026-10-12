@@ -9,6 +9,7 @@ import java.io.File
 import org.junit.Rule
 import org.junit.Test
 import org.junit.Assert.assertEquals
+import kotlinx.coroutines.flow.first
 import org.junit.Before
 import org.junit.runner.RunWith
 import org.junit.rules.TestWatcher
@@ -33,6 +34,42 @@ class UiSmokeTest {
         compose.waitUntil(15000) {vm.ready.value}
         compose.waitForIdle()
         if(compose.onAllNodesWithContentDescription("返回").fetchSemanticsNodes().isNotEmpty()) compose.onNodeWithContentDescription("返回").performClick()
+    }
+
+    @Test fun fullLargePresetImportSurvivesActivityRecreationAndFreshStartup() {
+        if(vm.selectedId.value!=null) compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNode(hasText("资料库") and hasClickAction()).performClick()
+        val fixture=LargePresetPersistenceTest().fixture()
+        val file=File(compose.activity.cacheDir,"large-ui-preset.json")
+        file.writeText(fixture.sourceJson)
+        var assetId: String?=null
+        val store=androidx.lifecycle.ViewModelStore()
+        try {
+            compose.runOnUiThread {vm.previewImport(Uri.fromFile(file),"preset")}
+            compose.waitUntil(30000) {vm.pendingImport.value!=null && !vm.operationBusy.value}
+            assetId=vm.pendingImport.value!!.resources.single().id
+            compose.onNodeWithText("导入副本").performClick()
+            compose.waitUntil(30000) {vm.resources.value.any {it.id==assetId}}
+            compose.onNodeWithText("预设").performClick()
+            compose.onNodeWithText("large-ui-preset").performScrollTo().assertIsDisplayed()
+            screenshot("11-large-preset-saved")
+            compose.activityRule.scenario.recreate()
+            compose.runOnUiThread {vm=ViewModelProvider(compose.activity)[ChatViewModel::class.java]}
+            compose.waitUntil(30000) {vm.resources.value.any {it.id==assetId}}
+            lateinit var fresh: ChatViewModel
+            compose.runOnUiThread {fresh=ViewModelProvider(store,ViewModelProvider.AndroidViewModelFactory.getInstance(compose.activity.application))[ChatViewModel::class.java]}
+            compose.waitUntil(15000) {fresh.ready.value}
+            org.junit.Assert.assertNull(fresh.selectedId.value)
+            val restored=kotlinx.coroutines.runBlocking {
+                kotlinx.coroutines.withTimeout(30000) {fresh.resources.first {items->items.any {it.id==assetId}}.first {it.id==assetId}}
+            }
+            assertEquals(fixture.sourceJson,restored.sourceJson)
+            assertEquals(220,com.moyer.roleplay.core.appJson.decodeFromString<com.moyer.roleplay.data.StylePreset>(restored.payload).blocks.size)
+        } finally {
+            compose.runOnUiThread {store.clear();assetId?.let {vm.deleteResource(it)}}
+            if(assetId!=null) compose.waitUntil(30000) {vm.resources.value.none {it.id==assetId}}
+            file.delete()
+        }
     }
 
     @Test fun freshLaunchStartsAtSessionsWhileRotationKeepsCurrentConversation() {

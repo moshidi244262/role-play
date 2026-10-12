@@ -20,7 +20,7 @@ import org.junit.runner.RunWith
 class LargePresetPersistenceTest {
     // Synthetic counterpart of the user's 220-block / 40-rule preset with a 6 MiB helper field.
     // No private community file is uploaded to the source repository.
-    private fun fixture(): ResourceAsset {
+    internal fun fixture(): ResourceAsset {
         val markers=listOf("charDescription","charPersonality","scenario","personaDescription","worldInfoBefore","worldInfoAfter","dialogueExamples","chatHistory")
         val prompts=JsonArray((0..211).map {buildJsonObject {
             put("identifier","p$it");put("name","块 $it");put("content",if(it==0) "{{setvar::style::简洁}}" else "{{getvar::style}} 写法 $it")
