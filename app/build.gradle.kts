@@ -71,7 +71,7 @@ tasks.register("exportCommunityProbeRuntime") {
         val target = layout.buildDirectory.dir("community-probe").get().asFile
         target.deleteRecursively()
         val tests = tasks.named<org.gradle.api.tasks.testing.Test>("testDebugUnitTest").get()
-        tests.classpath.files.filter { it.isDirectory || it.path.startsWith(layout.buildDirectory.get().asFile.path) || it.name.contains("kotlin-stdlib") ||
+        tests.classpath.files.filter { it.exists() }.filter { it.isDirectory || it.path.startsWith(layout.buildDirectory.get().asFile.path) || it.name.contains("kotlin-stdlib") ||
             it.name.contains("kotlinx-serialization") || it.name.contains("re2j") ||
             it.name.contains("jsoup") || it.name.contains("annotations") }.forEachIndexed { index, source ->
             if(source.isDirectory) source.copyRecursively(target.resolve("classes-$index"),overwrite=true)
