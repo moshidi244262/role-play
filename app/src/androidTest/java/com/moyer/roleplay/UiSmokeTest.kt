@@ -211,7 +211,8 @@ class UiSmokeTest {
         compose.waitUntil(10000) {compose.onAllNodes(isDialog()).fetchSemanticsNodes().isEmpty()}
         compose.waitForIdle()
         compose.onNodeWithText("资料库").performClick()
-        compose.waitUntil(10000) {compose.onAllNodesWithText("旧城档案 · 示例世界书").fetchSemanticsNodes().isNotEmpty()}
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("旧城档案 · 示例世界书"))
+        compose.onNodeWithText("旧城档案 · 示例世界书").assertIsDisplayed()
         screenshot("04-library")
     }
 
