@@ -17,6 +17,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Send
@@ -571,13 +573,20 @@ private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDi
     val choices by vm.modelChoices.collectAsStateWithLifecycle()
     val feedback by vm.connectionFeedback.collectAsStateWithLifecycle()
     val busy by vm.operationBusy.collectAsStateWithLifecycle()
+    val feedbackView = remember { BringIntoViewRequester() }
+    LaunchedEffect(feedback) {
+        if (feedback != null) {
+            withFrameNanos { }
+            kotlinx.coroutines.yield()
+            feedbackView.bringIntoView()
+        }
+    }
     fun profile() = initial.copy(name = name, provider = provider, baseUrl = url, protocol = protocol,
         model = model, maxOutputTokens = output.toIntOrNull() ?: 0, versionHeader = version)
     LaunchedEffect(initial.id) { vm.modelChoices.value = vm.savedModels.value[initial.id].orEmpty(); vm.connectionFeedback.value = null }
     LaunchedEffect(choices) { if (model.isBlank() && choices.isNotEmpty()) model = choices.first() }
     AlertDialog(onDismissRequest = { if (!busy) onDismiss() }, title = { Text("API 连接") }, text = {
         Column(Modifier.heightIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            feedback?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall) }
             Column(Modifier.weight(1f,fill=false).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 ProviderTemplates.all.forEach { template -> FilterChip(selected = provider == template.provider, enabled = !busy,
@@ -594,6 +603,8 @@ private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDi
             EditorField("服务地址（Base URL）", url, { url = it; vm.modelChoices.value = emptyList(); vm.connectionFeedback.value = null }, true)
             EditorField("模型 ID", model, { model = it }, true)
             TextButton(enabled = !busy, onClick = { finishTyping(); vm.fetchModels(profile(), key) }) { Text(if (busy) "正在连接…" else "获取模型列表") }
+            feedback?.let { Text(it, modifier=Modifier.fillMaxWidth().bringIntoViewRequester(feedbackView),
+                color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall) }
             Text("模型列表不可用时也能先保存连接，再手动填写模型 ID。", style = MaterialTheme.typography.bodySmall)
             OutlinedButton(onClick={finishTyping();modelPicker=true},enabled=!busy,modifier=Modifier.fillMaxWidth()) {Text("选择模型（${choices.size} 个已获取）")}
             if(provider=="DeepSeek") {
@@ -620,7 +631,7 @@ private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDi
             }
         }
     }, confirmButton = { TextButton(enabled = !busy && name.isNotBlank() && url.isNotBlank(), onClick = {
-        vm.saveConnection(profile(), key, onDismiss)
+        finishTyping(); vm.saveConnection(profile(), key, onDismiss)
     }) { Text("保存") } }, dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("取消") } })
     if (costConfirmation) AlertDialog(onDismissRequest = { costConfirmation = false }, title = { Text("测试连接") },
         text = { Text("将向所选 API 发送一条简短测试消息，会产生少量 API 用量。") },

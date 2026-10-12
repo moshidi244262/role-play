@@ -10,6 +10,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.Before
 import org.junit.runner.RunWith
+import org.junit.rules.TestWatcher
+import org.junit.runner.Description
 import androidx.lifecycle.ViewModelProvider
 import android.net.Uri
 import java.io.ByteArrayOutputStream
@@ -19,7 +21,10 @@ import java.util.zip.CRC32
 
 @RunWith(AndroidJUnit4::class)
 class UiSmokeTest {
-    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    @get:Rule(order=0) val compose = createAndroidComposeRule<MainActivity>()
+    @get:Rule(order=1) val captureFailure = object : TestWatcher() {
+        override fun failed(error: Throwable?, description: Description) { screenshot("failure-${description.methodName}") }
+    }
     private lateinit var vm: ChatViewModel
 
     @Before fun awaitDatabaseAndReturnToNavigation() {
