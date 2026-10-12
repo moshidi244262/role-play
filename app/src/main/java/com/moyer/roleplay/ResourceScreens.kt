@@ -144,6 +144,8 @@ fun ConfigEditor(initial: RoleplayConfig,assets: List<ResourceAsset>,title: Stri
             Text("未填写姓名时，第一人称使用‘我’。具体人物姓名可在上方身份中填写。", style=MaterialTheme.typography.bodySmall)
             Options("用户角色的叙述视角", listOf("auto" to "按角色卡与情境", "first" to "第一人称（我）", "third" to "第三人称（人物姓名）"), config.narrativeView) { config=config.copy(narrativeView=it) }
             Field("固定剧情记忆（已发生的事件、关系与线索）",config.memory,{config=config.copy(memory=it)})
+            Check("启用内置剧情记忆",config.builtInMemoryEnabled) {config=config.copy(builtInMemoryEnabled=it)}
+            Text("关闭后保留记忆内容，暂停发送内置记忆与自动整理；世界书和预设照常使用。",style=MaterialTheme.typography.bodySmall)
             Field("作者注释 / 当前剧情提醒",config.authorNote,{config=config.copy(authorNote=it)})
             TextButton(onClick={advanced=!advanced}) { Text(if(advanced) "收起高级选项" else "上下文与扫描选项") }
             if(advanced) {

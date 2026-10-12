@@ -53,4 +53,28 @@ class StoryMemoryPersistenceTest {
             assertEquals("故事".repeat(500),preview.content)
         } finally {database.close()}
     }
+
+    @Test fun pausedMemorySurvivesRoomForkAndRestoreWithoutCompressingHistory() = runBlocking {
+        val database=Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(),AppDatabase::class.java).build()
+        try {
+            val repo=ChatRepository(database);val dao=repo.dao;val card=CharacterCard(name="独立记忆")
+            dao.saveCharacter(card);val id=repo.createSession(card,null)
+            (0 until 40).forEach {dao.insertMessage(ChatMessage(sessionId=id,position=it.toLong(),role="assistant",content="原文$it"))}
+            val history=dao.history(id);val summary=StoryMemory.plan(history,null)!!.summary("本地存档")
+            val config=RoleplayConfig(memory="固定存档",storySummary=summary,builtInMemoryEnabled=false,autoSummary=true,compactSummaryHistory=true,historyBudgetChars=0)
+            dao.saveConfig(id,config.json(),"我")
+            val fork=repo.forkSession(id,history.last().id)
+            assertFalse(readConfig(dao.session(fork)!!.config).builtInMemoryEnabled)
+            repo.restore(repo.export(id))
+            val restored=dao.allSessions().first {it.id !in setOf(id,fork)}
+            val restoredConfig=readConfig(restored.config);val restoredHistory=dao.history(restored.id)
+            assertFalse(restoredConfig.builtInMemoryEnabled)
+            assertEquals(config.memory,restoredConfig.memory);assertEquals(summary,restoredConfig.storySummary)
+            assertTrue(restoredConfig.autoSummary);assertTrue(restoredConfig.compactSummaryHistory)
+            val report=PromptBuilder.compile(restored,restoredHistory)
+            assertEquals(40,report.messages.count {it.role=="assistant"})
+            assertEquals(0,report.summarizedMessages)
+            assertNull(StoryMemory.generationPlan(restoredHistory,restoredConfig,automatic=true))
+        } finally {database.close()}
+    }
 }

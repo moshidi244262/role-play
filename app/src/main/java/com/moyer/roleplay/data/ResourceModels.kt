@@ -24,7 +24,8 @@ data class RoleplayConfig(
     val persona: String = "", val memory: String = "", val authorNote: String = "", val authorDepth: Int = 2,
     val scanDepth: Int = 4, val loreBudget: Int = 2048, val historyBudgetChars: Int = 48000,
     val narrativeView: String = "auto", val modelOverride: String = "",
-    val storySummary: StorySummary? = null, val autoSummary: Boolean = false, val compactSummaryHistory: Boolean = false
+    val storySummary: StorySummary? = null, val autoSummary: Boolean = false, val compactSummaryHistory: Boolean = false,
+    val builtInMemoryEnabled: Boolean = true
 ) {
     fun references() = (lorebookIds + regexIds + listOfNotNull(presetId, characterPromptId)).toSet()
     fun remap(ids: Map<String, String>) = copy(lorebookIds = lorebookIds.mapNotNull { ids[it] },
@@ -136,5 +137,6 @@ fun configDefaults(defaults: RoleplayConfig, card: RoleplayConfig): RoleplayConf
     memory=card.memory.ifBlank {defaults.memory},authorNote=card.authorNote.ifBlank { defaults.authorNote },authorDepth=if(card.authorDepth==2) defaults.authorDepth else card.authorDepth,
     scanDepth=if(card.scanDepth==4) defaults.scanDepth else card.scanDepth,loreBudget=if(card.loreBudget==2048) defaults.loreBudget else card.loreBudget,
     historyBudgetChars=if(card.historyBudgetChars==48000) defaults.historyBudgetChars else card.historyBudgetChars,
-    storySummary=null, autoSummary=card.autoSummary || defaults.autoSummary, compactSummaryHistory=card.compactSummaryHistory || defaults.compactSummaryHistory
+    storySummary=null, autoSummary=card.autoSummary || defaults.autoSummary, compactSummaryHistory=card.compactSummaryHistory || defaults.compactSummaryHistory,
+    builtInMemoryEnabled=card.builtInMemoryEnabled && defaults.builtInMemoryEnabled
 )

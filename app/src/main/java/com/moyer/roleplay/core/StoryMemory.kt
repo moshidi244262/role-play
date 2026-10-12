@@ -47,6 +47,11 @@ object StoryMemory {
         return summary.takeIf {prefix.size==it.sourceCount && prefix.lastOrNull()?.position==it.throughPosition && digest(prefix)==it.sourceDigest}
     }
 
+    fun generationPlan(history: List<ChatMessage>, config: RoleplayConfig, automatic: Boolean = false): SummaryPlan? {
+        if(!config.builtInMemoryEnabled || (automatic && !config.autoSummary)) return null
+        return plan(history,config.storySummary,if(automatic) 20 else 1)
+    }
+
     fun plan(history: List<ChatMessage>, summary: StorySummary?, minimumNew: Int = 1): SummaryPlan? {
         val messages=eligible(history)
         val previous=valid(summary,history)

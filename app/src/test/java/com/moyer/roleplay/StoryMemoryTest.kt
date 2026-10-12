@@ -91,6 +91,66 @@ class StoryMemoryTest {
         assertFalse(RoleplayConfig().compactSummaryHistory)
     }
 
+    @Test fun pausedMemoryStopsInjectionAndCompressionWithoutChangingImportedResourcesOrHistory() {
+        val messages=history()
+        val summary=StoryMemory.plan(messages,null)!!.summary("内置摘要的剧情")
+        val preset=ResourceAsset(kind="preset",name="外部记忆提示",sourceJson="{\"original\":true}",
+            payload=appJson.encodeToString(StylePreset(blocks=listOf(PromptBlock(content="外部记忆：{{setvar::external_memory::保留预设事实}}{{getvar::external_memory}}")))))
+        val lore=ResourceAsset(kind="lorebook",name="外部背景",payload=appJson.encodeToString(LoreBook(listOf(LoreEntry(constant=true,content="保留世界书事实")))))
+        val config=RoleplayConfig(memory="内置固定记忆",storySummary=summary,autoSummary=true,compactSummaryHistory=true,
+            builtInMemoryEnabled=false,historyBudgetChars=0,presetId=preset.id,lorebookIds=listOf(lore.id))
+        val original=messages.toList();val resources=listOf(preset,lore)
+        val report=PromptBuilder.compile(session(config),messages,resources)
+        assertEquals(0,report.summarizedMessages);assertEquals(0,report.trimmedMessages)
+        assertFalse(report.messages.any {it.content.contains("内置固定记忆") || it.content.contains(summary.text)})
+        assertTrue(report.messages.any {it.content=="外部记忆：保留预设事实"})
+        assertTrue(report.messages.any {it.content.contains("保留世界书事实")})
+        messages.forEach {message -> assertTrue(report.messages.any {it.content==message.content})}
+        assertEquals(original,messages);assertEquals(preset,resources.first())
+        assertTrue(report.memoryStatus.contains("已暂停"))
+        val resumed=PromptBuilder.compile(session(config.copy(builtInMemoryEnabled=true)),messages,resources)
+        assertEquals(28,resumed.summarizedMessages)
+        assertTrue(resumed.messages.any {it.content.contains(summary.text)})
+        assertTrue(resumed.messages.any {it.content.contains(config.memory)})
+    }
+
+    @Test fun memoryFactsRemainLiteralAndCannotSetOrReadPresetVariables() {
+        val messages=history()
+        val fixed="{{setvar::external_memory::不应执行}} {{plugin_summary}}"
+        val summary=StoryMemory.plan(messages,null)!!.summary("{{setvar::other_memory::也不应执行}}")
+        val preset=ResourceAsset(kind="preset",name="变量检查",payload=appJson.encodeToString(StylePreset(
+            blocks=listOf(PromptBlock(content="A：{{getvar::external_memory}}；B：{{getvar::other_memory}}")))))
+        val report=PromptBuilder.compile(session(RoleplayConfig(memory=fixed,storySummary=summary,presetId=preset.id)),messages,listOf(preset))
+        assertTrue(report.messages.any {it.content.contains(fixed)})
+        assertTrue(report.messages.any {it.content.contains(summary.text)})
+        assertTrue(report.messages.any {it.content=="A：；B："})
+        assertFalse(report.warnings.any {it.contains("plugin_summary")})
+    }
+
+    @Test fun pausedGenerationCannotRunManuallyOrAutomaticallyEvenWithSavedAutomaticPreference() {
+        val messages=history()
+        val paused=RoleplayConfig(builtInMemoryEnabled=false,autoSummary=true,compactSummaryHistory=true)
+        assertNull(StoryMemory.generationPlan(messages,paused))
+        assertNull(StoryMemory.generationPlan(messages,paused,automatic=true))
+        assertNotNull(StoryMemory.generationPlan(messages,paused.copy(builtInMemoryEnabled=true),automatic=true))
+        assertNull(StoryMemory.generationPlan(messages,RoleplayConfig(),automatic=true))
+        assertNotNull(StoryMemory.generationPlan(messages,RoleplayConfig()))
+    }
+
+    @Test fun pauseSurvivesBackupAndNewStoryDefaultsWhileLegacyConfigKeepsExistingBehavior() {
+        val messages=history();val summary=StoryMemory.plan(messages,null)!!.summary("独立存储的旧剧情")
+        val config=RoleplayConfig(memory="保留固定记忆",storySummary=summary,builtInMemoryEnabled=false,autoSummary=true,compactSummaryHistory=true)
+        val restored=BackupCodec.remap(BackupCodec.decode(BackupCodec.encode(BackupBundle(characters=listOf(card),sessions=listOf(session(config)),messages=messages))))
+        val saved=readConfig(restored.sessions.single().config)
+        assertFalse(saved.builtInMemoryEnabled);assertTrue(saved.autoSummary);assertTrue(saved.compactSummaryHistory)
+        assertEquals(config.memory,saved.memory)
+        assertNotNull(StoryMemory.valid(saved.storySummary,restored.messages))
+        assertFalse(configDefaults(config,RoleplayConfig()).builtInMemoryEnabled)
+        assertFalse(configDefaults(RoleplayConfig(),config).builtInMemoryEnabled)
+        assertNull(configDefaults(config,RoleplayConfig()).storySummary)
+        assertTrue(readConfig("{}").builtInMemoryEnabled)
+    }
+
     @Test fun worldbookDiagnosticsExplainDisabledKeywordsSecondaryProbabilityAndBudget() {
         val entries=listOf(LoreEntry(name="停用",enabled=false),LoreEntry(name="地点",keys=listOf("西门"),content="西门设定"),
             LoreEntry(name="辅助",keys=listOf("雨夜"),selective=true,secondaryKeys=listOf("城外"),content="城外资料"),

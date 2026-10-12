@@ -222,7 +222,7 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
             dismissButton={TextButton(onClick={deletingAsset=null}) {Text("取消")}})}
         memoryTarget?.let {session -> StoryMemoryEditor(session,messages.filter {it.sessionId==session.id},summaryBusy,summaryCandidate,
             {vm.generateStorySummary(session.id)},vm::stop,{memoryTarget=null},
-            {fixed,summary,automatic,compact,expected -> vm.saveStoryMemory(session.id,fixed,summary,automatic,compact,expected) {memoryTarget=null}}) }
+            {fixed,summary,automatic,compact,enabled,expected -> vm.saveStoryMemory(session.id,fixed,summary,automatic,compact,enabled,expected) {memoryTarget=null}}) }
         configTarget?.let {session->ConfigEditor(readConfig(session.config),resources,"会话设定",{configTarget=null}) {vm.saveConfig(session.id,it) {configTarget=null}}}
         if(editingDefaults) ConfigEditor(defaults,resources,"新会话默认设定",{editingDefaults=false}) {vm.saveConfig(null,it) {editingDefaults=false}}
         greetingCard?.let {card->

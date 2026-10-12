@@ -76,11 +76,42 @@ class DesignReviewTest {
 
     @Test fun memoryEditorDefaultsDoNotOptIntoPaidAutomaticCalls() {
         var automatic=true;var compact=true
-        compose.setContent {RolePlayTheme(false) {StoryMemoryEditor(session,emptyList(),false,null,{},{},{},{_,_,a,c,_->automatic=a;compact=c})}}
+        compose.setContent {RolePlayTheme(false) {StoryMemoryEditor(session,emptyList(),false,null,{},{},{},{_,_,a,c,_,_->automatic=a;compact=c})}}
         compose.onNodeWithText("剧情记忆").assertIsDisplayed()
         capture("24-redesign-memory.png")
         compose.onNodeWithText("固定记忆").performTextInput("约好明晚在西门见面。")
         compose.onNodeWithText("保存记忆").performClick()
         assertFalse(automatic);assertFalse(compact)
+    }
+
+    @Test fun memoryCanBePausedWithoutDeletingOutdatedSummaryOrSavedPreferences() {
+        val history=(0 until 40).map {ChatMessage(sessionId=session.id,position=it.toLong(),role="assistant",content="消息$it")}
+        val summary=StoryMemory.plan(history,null)!!.summary("已有剧情摘要")
+        val config=RoleplayConfig(memory="约好明晚见面",storySummary=summary,autoSummary=true,compactSummaryHistory=true)
+        var saved: RoleplayConfig?=null
+        compose.setContent {RolePlayTheme(false) {StoryMemoryEditor(session.copy(config=config.json()),history.take(5),false,null,{},{},{},
+            {fixed,value,automatic,compact,enabled,_->saved=config.copy(memory=fixed,storySummary=value,autoSummary=automatic,compactSummaryHistory=compact,builtInMemoryEnabled=enabled)})}}
+        compose.onNodeWithTag("builtin-memory-enabled").assertIsOn().performClick().assertIsOff()
+        compose.onNodeWithTag("generate-summary").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText("保存记忆").performClick()
+        assertNotNull(saved)
+        assertFalse(saved!!.builtInMemoryEnabled)
+        assertEquals(config.memory,saved!!.memory);assertEquals(summary,saved!!.storySummary)
+        assertTrue(saved!!.autoSummary);assertTrue(saved!!.compactSummaryHistory)
+    }
+
+    @Test fun resumingMemoryRequiresSavingBeforeAnyManualGeneration() {
+        var generated=false;var resumed=false
+        val history=(0 until 40).map {ChatMessage(sessionId=session.id,position=it.toLong(),role="assistant",content="消息$it")}
+        val summary=StoryMemory.plan(history,null)!!.summary("暂停时保留的旧摘要")
+        val config=RoleplayConfig(builtInMemoryEnabled=false,storySummary=summary)
+        var savedSummary: StorySummary?=null
+        compose.setContent {RolePlayTheme(false) {StoryMemoryEditor(session.copy(config=config.json()),emptyList(),false,null,{generated=true},{},{},
+            {_,value,_,_,enabled,_->resumed=enabled;savedSummary=value})}}
+        compose.onNodeWithTag("builtin-memory-enabled").assertIsOff().performClick().assertIsOn()
+        compose.onNodeWithTag("generate-summary").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText("保存记忆").performClick()
+        assertTrue(resumed);assertFalse(generated)
+        assertEquals(summary,savedSummary)
     }
 }

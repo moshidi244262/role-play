@@ -254,7 +254,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 require(accumulated.isNotBlank() || endStatus != "complete") { "模型没有返回文字，请检查模型能力或输出上限" }
                 dao.updateMessage(currentReply.id, accumulated.toString(), endStatus)
                 dao.touch(id, System.currentTimeMillis())
-                if(endStatus=="complete" && readConfig(requireNotNull(dao.session(id)).config).autoSummary) generateStorySummary(id,true)
+                if(endStatus=="complete") {
+                    val memoryConfig=readConfig(requireNotNull(dao.session(id)).config)
+                    if(memoryConfig.builtInMemoryEnabled && memoryConfig.autoSummary) generateStorySummary(id,true)
+                }
             } catch (e: CancellationException) {
                 withContext(NonCancellable) { reply?.let { dao.updateMessage(it.id, accumulated.toString(), "interrupted") } }
                 throw e
@@ -275,7 +278,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val session=requireNotNull(dao.session(sessionId)) {"会话不存在"}
                 val config=readConfig(session.config)
-                val plan=withContext(Dispatchers.Default) {StoryMemory.plan(dao.history(sessionId),config.storySummary,if(automatic) 20 else 1)}
+                if(!config.builtInMemoryEnabled) {
+                    if(!automatic) notice.value="内置剧情记忆已暂停；启用并保存后才能生成摘要。"
+                    return@launch
+                }
+                val plan=withContext(Dispatchers.Default) {StoryMemory.generationPlan(dao.history(sessionId),config,automatic)}
                 if(plan==null) {
                     if(!automatic) notice.value="暂时没有可整理的旧剧情。保留最近12条消息，需要至少13条完整消息；单条旧消息超过60000字符时请先手工整理。"
                     return@launch
@@ -294,6 +301,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 mutations.withLock {
                     val latest=requireNotNull(dao.session(sessionId))
                     val latestConfig=readConfig(latest.config)
+                    if(!latestConfig.builtInMemoryEnabled) return@withLock
                     require(latestConfig.storySummary==config.storySummary && StoryMemory.valid(summary,dao.history(sessionId))!=null) {"剧情已变化，请重新整理摘要"}
                     if(automatic && latestConfig.autoSummary) {
                         dao.saveConfig(sessionId,latestConfig.copy(storySummary=summary).json(),latest.playerName)
@@ -307,14 +315,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveStoryMemory(id: String, fixed: String, summary: StorySummary?, automatic: Boolean, compact: Boolean,
-        expected: StorySummary?, onSaved: ()->Unit) = viewModelScope.launch {
+        enabled: Boolean, expected: StorySummary?, onSaved: ()->Unit) = viewModelScope.launch {
         if(sending.value || summaryBusy.value) return@launch
         safe {mutations.withLock {
             val session=requireNotNull(dao.session(id))
             val config=readConfig(session.config)
             require(config.storySummary==expected) {"摘要已更新，请关闭后重新打开剧情记忆"}
-            require(summary==null || StoryMemory.valid(summary,dao.history(id))!=null) {"摘要来源已变化，请重新生成"}
-            val value=config.copy(memory=fixed,storySummary=summary,autoSummary=automatic,compactSummaryHistory=compact)
+            require(!enabled || summary==null || summary==config.storySummary || StoryMemory.valid(summary,dao.history(id))!=null) {"摘要来源已变化，请重新生成"}
+            val value=config.copy(memory=fixed,storySummary=summary,autoSummary=automatic,compactSummaryHistory=compact,builtInMemoryEnabled=enabled)
             value.validate();dao.saveConfig(id,value.json(),session.playerName)
             summaryCandidate.value=null
             notice.value="剧情记忆已保存";onSaved()
