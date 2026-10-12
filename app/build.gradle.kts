@@ -12,8 +12,8 @@ android {
         applicationId = "com.moyer.roleplay.next"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.4.1-alpha"
+        versionCode = 8
+        versionName = "0.4.2-alpha"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }

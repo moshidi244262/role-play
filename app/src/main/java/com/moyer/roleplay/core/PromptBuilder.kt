@@ -3,10 +3,11 @@ package com.moyer.roleplay.core
 import com.moyer.roleplay.data.*
 
 data class PromptReport(val messages: List<PromptMessage>, val hits: List<String> = emptyList(),
-    val warnings: List<String> = emptyList(), val trimmedMessages: Int = 0) {
+    val warnings: List<String> = emptyList(), val trimmedMessages: Int = 0, val loreBudgetSummary: String = "") {
     fun readable() = buildString {
         appendLine("世界书命中：${hits.size} 条；裁剪旧消息：$trimmedMessages 条")
         appendLine("估算上下文：${messages.sumOf { it.content.length }} 字符 / 约 ${messages.sumOf { estimateTokens(it.content) + 8 }} tokens（非精确计数）")
+        if (loreBudgetSummary.isNotBlank()) appendLine(loreBudgetSummary)
         if (hits.isNotEmpty()) appendLine(hits.joinToString("\n"))
         if (warnings.isNotEmpty()) appendLine("提示：\n" + warnings.distinct().joinToString("\n"))
         appendLine()
@@ -156,7 +157,7 @@ object PromptBuilder {
         }
         require(result.sumOf { it.content.length } <= config.historyBudgetChars) { "宏或示例展开后超出上下文预算，请减少资料或提高预算" }
         if(config.references().any { id -> assets.none { it.id==id } }) warnings += "有绑定资料未找到，已跳过；可重新选择资料"
-        return PromptReport(result,lore.entries.map { "${it.bookName} / ${it.entry.name}（${it.reason}）" },(warnings+expander.warnings).distinct(),valid.size-dialogue.size)
+        return PromptReport(result,lore.entries.map { "${it.bookName} / ${it.entry.name}（${it.reason}）" },(warnings+expander.warnings).distinct(),valid.size-dialogue.size,lore.budgetSummary)
     }
 
     private fun exampleMessages(text: String, char: String, user: String, template: String, expander: MacroExpander): List<PromptMessage> {
@@ -181,15 +182,24 @@ object PromptBuilder {
     }
 
     private data class Hit(val bookId: String,val bookName: String,val entry: LoreEntry,val content: String,val reason: String)
-    private data class LoreResult(val entries: List<Hit>,val warnings: List<String>)
+    private data class LoreResult(val entries: List<Hit>,val warnings: List<String>,val budgetSummary: String)
     private fun selectLore(config: RoleplayConfig,assets: List<ResourceAsset>,history: List<ChatMessage>,card: CharacterCard,userName: String,
         transform: (String)->String): LoreResult {
         val charName=card.name
         val books = config.lorebookIds.mapNotNull { id -> assets.firstOrNull { it.id==id && it.kind=="lorebook" && it.enabled } }
             .map { it to appJson.decodeFromString<LoreBook>(it.payload) }
+        val limits = books.associate { (asset, book) -> asset.id to asset.effectiveLoreBudget(book,config.loreBudget) }
+        val follows = books.associate { (asset, book) -> asset.id to asset.followsSessionLoreBudget(book) }
         val hits = mutableListOf<Hit>();val warnings = mutableListOf<String>();val seen=mutableSetOf<String>()
         val historySeed=history.takeLast(100).fold(1) { hash,message -> 31 * hash + message.content.hashCode() }
         var total=0; val perBook=mutableMapOf<String,Int>();val deadline=System.nanoTime()+1_000_000_000
+        fun result() = LoreResult(hits,warnings,buildString {
+            append("世界书会话预算：$total / ${config.loreBudget} 估算 tokens")
+            books.forEach { (asset,book) ->
+                append("\n${asset.name}：${perBook[asset.id] ?: 0} / ${limits.getValue(asset.id)}，")
+                append(if(follows.getValue(asset.id)) "跟随会话预算" else "本书独立上限")
+            }
+        })
         fun matches(key: String,text: String,sensitive: Boolean,whole: Boolean): Boolean {
             val expanded=key.replace("{{char}}",charName).replace("{{user}}",userName)
             if(expanded.startsWith('/')) return RegexEngine.matches(expanded,text)
@@ -209,7 +219,7 @@ object PromptBuilder {
         for (pass in 0..3) {
             val candidates = mutableListOf<Hit>()
             for((asset,book) in books) for(entry in book.entries) {
-                if (System.nanoTime()>deadline) {warnings+="世界书扫描达到时间预算，剩余条目未扫描";return LoreResult(hits,warnings)}
+                if (System.nanoTime()>deadline) {warnings+="世界书扫描达到时间预算，剩余条目未扫描";return result()}
                 if(!entry.enabled || entry.probability == 0 || "${asset.id}:${entry.id}" in seen || (pass>0 && (!book.recursive || entry.excludeRecursion))) continue
                 val depth=entry.scanDepth ?: config.scanDepth.takeUnless { it==4 } ?: book.scanDepth
                 val extra=listOfNotNull(config.persona.takeIf { entry.matchPersona },card.description.takeIf { entry.matchDescription },
@@ -231,13 +241,19 @@ object PromptBuilder {
             var added=0
             candidates.sortedWith(compareByDescending<Hit>{it.entry.constant}.thenByDescending{it.entry.order}).forEach { hit ->
                 val count=estimateTokens(hit.content)
-                val bookLimit=books.first { it.first.id==hit.bookId }.second.budget
+                val bookLimit=limits.getValue(hit.bookId)
+                val used=perBook[hit.bookId] ?: 0
                 seen+="${hit.bookId}:${hit.entry.id}"
-                if(total+count > config.loreBudget || (perBook[hit.bookId]?:0)+count>bookLimit) warnings += "${hit.bookName} / ${hit.entry.name}：世界书预算不足，未插入"
+                val reasons=buildList {
+                    if(total+count > config.loreBudget) add("会话总预算不足（已用 $total / ${config.loreBudget}）")
+                    if(used+count>bookLimit && !follows.getValue(hit.bookId))
+                        add("本书预算不足（已用 $used / $bookLimit）；可在资料库调整或启用“跟随会话预算”")
+                }
+                if(reasons.isNotEmpty()) warnings += "${hit.bookName} / ${hit.entry.name}：已触发，需约 $count tokens；${reasons.joinToString("；")}，未插入"
                 else {hits+=hit;total+=count;perBook[hit.bookId]=(perBook[hit.bookId]?:0)+count;added++}
             }
             if(added==0) break
         }
-        return LoreResult(hits,warnings)
+        return result()
     }
 }

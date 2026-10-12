@@ -138,6 +138,10 @@ fun ConfigEditor(initial: RoleplayConfig,assets: List<ResourceAsset>,title: Stri
                 NumberField("作者注释深度（距最新消息）",config.authorDepth) {config=config.copy(authorDepth=it)}
                 NumberField("世界书扫描最近消息数",config.scanDepth) {config=config.copy(scanDepth=it)}
                 NumberField("世界书预算（估算 tokens）",config.loreBudget) {config=config.copy(loreBudget=it)}
+                resources.filter {it.kind=="lorebook" && it.id in config.lorebookIds && it.enabled}.forEach {asset ->
+                    val book=appJson.decodeFromString<LoreBook>(asset.payload)
+                    Text("${asset.name}：" + if(asset.followsSessionLoreBudget(book)) "跟随会话预算" else "本书另有限额 ${book.budget} tokens；可在资料库调整",style=MaterialTheme.typography.bodySmall)
+                }
                 NumberField("上下文字符预算",config.historyBudgetChars) {config=config.copy(historyBudgetChars=it)}
                 Text("预算为字符和 token 估算，会从最早的聊天记录开始裁剪；本地记录仍完整保留。",style=MaterialTheme.typography.bodySmall)
             }
@@ -191,7 +195,10 @@ fun ResourceEditor(asset: ResourceAsset,onDismiss: ()->Unit,onSave: (ResourceAss
                         if(advanced) {
                             Check("递归扫描（最多 4 轮）",lore.recursive) {lore=lore.copy(recursive=it)}
                             NumberField("默认扫描深度",lore.scanDepth) {lore=lore.copy(scanDepth=it)}
-                            NumberField("本书预算（估算 tokens）",lore.budget) {lore=lore.copy(budget=it)}
+                            val follows=asset.followsSessionLoreBudget(lore)
+                            Check("跟随会话预算",follows) {lore=lore.copy(followSessionBudget=it)}
+                            if(!follows) NumberField("本书预算（估算 tokens）",lore.budget) {lore=lore.copy(budget=it,followSessionBudget=false)}
+                            Text(if(follows) "使用当前会话的世界书总额度；多本书共享这份额度。" else "会话总额度和本书限额同时生效，0 表示不插入。",style=MaterialTheme.typography.bodySmall)
                         }
                     }
                     items(lore.entries.filter {matches(it.name,it.content,it.enabled)},key={it.id}) {value ->

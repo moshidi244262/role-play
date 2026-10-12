@@ -42,7 +42,7 @@ object CommunityImporter {
     }
     private fun decodeAny(bytes: ByteArray, filename: String): ImportPreview {
         require(bytes.size <= BackupCodec.MAX_BYTES) { "文件超过 16 MB，暂不支持" }
-        val text = if (PngCardCodec.isPng(bytes)) PngCardCodec.extract(bytes) else bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")
+        val text = CharacterCardInspector.sourceText(bytes)
         val root = try { appJson.parseToJsonElement(text) } catch (_: Exception) { throw IllegalArgumentException("文件不是有效的 JSON 或 PNG 角色卡") }
         if (root is JsonObject && root.string("format") in setOf("roleplay.backup", "roleplay.chat"))
             return ImportPreview(backup = BackupCodec.decode(text))
@@ -148,7 +148,8 @@ object CommunityImporter {
                 matchScenario = e.bool("matchScenario", ext.bool("matchScenario")))
         }
         val book = LoreBook(entries, root.bool("recursive_scanning", root.bool("recursive")),
-            root.int("scan_depth", 4).coerceIn(0,100), root.int("token_budget", 2048).coerceIn(0,16384))
+            root.int("scan_depth", 4).coerceIn(0,100), root.int("token_budget", 2048).coerceIn(0,16384),
+            followSessionBudget = (root["token_budget"] as? JsonPrimitive)?.intOrNull == null)
         return ResourceAsset(kind = "lorebook", name = name.take(200), payload = appJson.encodeToString(book),
             sourceJson = root.toString(), notes = notes.distinct().take(100).joinToString("\n")).also { it.validate() }
     }

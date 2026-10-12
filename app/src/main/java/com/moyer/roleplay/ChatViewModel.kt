@@ -42,6 +42,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val ready = MutableStateFlow(false)
     val notice = MutableStateFlow<String?>(null)
     val pendingImport = MutableStateFlow<ImportPreview?>(null)
+    val cardInspection = MutableStateFlow<CardInspection?>(null)
+    val cardInspectionError = MutableStateFlow<String?>(null)
+    val cardInspectionBusy = MutableStateFlow(false)
+    var pendingInspectionExport: CardInspection? = null
     val operationBusy = MutableStateFlow(false)
     val modelChoices = MutableStateFlow<List<String>>(emptyList())
     val savedModels = MutableStateFlow(runCatching {
@@ -329,6 +333,50 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 } else pack
             }
         } } finally { operationBusy.value = false }
+    }
+
+    fun inspectCharacterFile(uri: Uri) = viewModelScope.launch {
+        if(cardInspectionBusy.value) return@launch
+        cardInspectionBusy.value=true; cardInspection.value=null; cardInspectionError.value=null
+        try {
+            val bytes=withContext(Dispatchers.IO) {
+                (app.contentResolver.openInputStream(uri) ?: error("文件无法读取")).use {input ->
+                    val output=ByteArrayOutputStream(); val buffer=ByteArray(8192)
+                    while(true) {
+                        val n=input.read(buffer); if(n<0) break
+                        require(output.size()+n<=BackupCodec.MAX_BYTES) {"文件超过 16 MB，暂不支持"}
+                        output.write(buffer,0,n)
+                    }
+                    output.toByteArray()
+                }
+            }
+            cardInspection.value=withContext(Dispatchers.Default) {CharacterCardInspector.inspect(bytes)}
+        } catch(e: CancellationException) {throw e}
+        catch(e: Exception) {cardInspectionError.value=safeError(e)}
+        finally {cardInspectionBusy.value=false}
+    }
+
+    fun inspectStoredCharacter(card: CharacterCard) = viewModelScope.launch {
+        if(cardInspectionBusy.value) return@launch
+        cardInspectionBusy.value=true; cardInspection.value=null; cardInspectionError.value=null
+        try {cardInspection.value=withContext(Dispatchers.Default) {CharacterCardInspector.stored(card)}}
+        catch(e: CancellationException) {throw e}
+        catch(e: Exception) {cardInspectionError.value=safeError(e)}
+        finally {cardInspectionBusy.value=false}
+    }
+
+    fun exportCardInspection(uri: Uri, inspection: CardInspection, json: Boolean) = viewModelScope.launch {
+        if(cardInspectionBusy.value) return@launch
+        cardInspectionBusy.value=true
+        try {safe {
+            val bytes=withContext(Dispatchers.Default) {
+                (if(json) inspection.sourceJson else inspection.plainText()).toByteArray(Charsets.UTF_8)
+            }
+            withContext(Dispatchers.IO) {
+                (app.contentResolver.openOutputStream(uri,"wt") ?: error("文件无法写入")).use {it.write(bytes)}
+            }
+            notice.value="角色卡${if(json) " JSON" else "明文"}已导出"
+        }} finally {cardInspectionBusy.value=false}
     }
 
     fun confirmImport() = viewModelScope.launch {

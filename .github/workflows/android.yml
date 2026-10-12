@@ -28,6 +28,16 @@ jobs:
           gradle-version: '8.9'
       - name: Unit tests, APK and lint
         run: gradle testDebugUnitTest assembleDebug lintDebug exportCommunityProbeRuntime --stacktrace
+      - name: Retain APK verification tools
+        run: |
+          mkdir -p app/build/delivery-tools
+          cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" app/build/delivery-tools/
+          cp "$ANDROID_HOME/build-tools/35.0.0/zipalign" app/build/delivery-tools/
+          cp -r "$ANDROID_HOME/build-tools/35.0.0/lib64" app/build/delivery-tools/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-delivery-tools
+          path: app/build/delivery-tools/
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -87,12 +87,16 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
         val drafts by vm.drafts.collectAsStateWithLifecycle()
         val notice by vm.notice.collectAsStateWithLifecycle()
         val pending by vm.pendingImport.collectAsStateWithLifecycle()
+        val cardInspection by vm.cardInspection.collectAsStateWithLifecycle()
+        val cardInspectionError by vm.cardInspectionError.collectAsStateWithLifecycle()
+        val cardInspectionBusy by vm.cardInspectionBusy.collectAsStateWithLifecycle()
         val operationBusy by vm.operationBusy.collectAsStateWithLifecycle()
         val savedModels by vm.savedModels.collectAsStateWithLifecycle()
         val modelChoices by vm.modelChoices.collectAsStateWithLifecycle()
         val connectionFeedback by vm.connectionFeedback.collectAsStateWithLifecycle()
         var tab by rememberSaveable { mutableIntStateOf(0) }
         var helpOpen by rememberSaveable { mutableStateOf(false) }
+        var inspectorOpen by rememberSaveable {mutableStateOf(false)}
         var importKind by rememberSaveable { mutableStateOf<String?>(null) }
         var editCharacter by remember { mutableStateOf<CharacterCard?>(null) }
         var editConnection by remember { mutableStateOf<ConnectionProfile?>(null) }
@@ -125,6 +129,17 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
         val cardExporter=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) {uri->
             if(uri!=null) exportCard?.let {vm.exportCharacter(uri,it)}
         }
+        val inspectionImporter=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {uri ->
+            if(uri!=null) vm.inspectCharacterFile(uri)
+        }
+        val inspectionTextExporter=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) {uri ->
+            if(uri!=null) vm.pendingInspectionExport?.let {vm.exportCardInspection(uri,it,false)}
+            vm.pendingInspectionExport=null
+        }
+        val inspectionJsonExporter=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) {uri ->
+            if(uri!=null) vm.pendingInspectionExport?.let {vm.exportCardInspection(uri,it,true)}
+            vm.pendingInspectionExport=null
+        }
         fun importFile() { importKind=null; importer.launch(arrayOf("application/json","text/plain","application/octet-stream","image/png")) }
         fun importResource(kind: String) {
             importKind=kind
@@ -142,9 +157,9 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
         fun returnToSessions() { tab = 0; vm.backToList() }
         BackHandler(enabled = selectedId != null) { returnToSessions() }
         Scaffold(snackbarHost = { SnackbarHost(snackbar) }, bottomBar = {
-            if (selectedId == null && !(tab==3 && helpOpen)) NavigationBar {
+            if (selectedId == null && !(tab==3 && (helpOpen || inspectorOpen))) NavigationBar {
                 navigation.forEachIndexed { index, item ->
-                    NavigationBarItem(selected = tab == index, onClick = { tab = index; helpOpen=false },
+                    NavigationBarItem(selected = tab == index, onClick = { tab = index; helpOpen=false; inspectorOpen=false },
                         icon = { Icon(item.icon, item.title) }, label = { Text(item.title) })
                 }
             }
@@ -167,6 +182,12 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
                         showTokenUsage = showTokenUsage, onShowTokenUsage = vm::setShowTokenUsage,
                         onPreview = { scope.launch { runCatching { vm.promptPreview(session.id) }.onSuccess { preview = it }.onFailure {vm.notice.value="上下文无法组装，请检查会话预算与资料"} } })
                     tab == 3 && helpOpen -> HelpScreen { helpOpen=false }
+                    tab == 3 && inspectorOpen -> CardInspectorScreen(cards,cardInspection,cardInspectionBusy,cardInspectionError,
+                        {inspectorOpen=false},{inspectionImporter.launch(arrayOf("image/*","application/json","text/plain","application/octet-stream"))},
+                        vm::inspectStoredCharacter,{json -> cardInspection?.let {
+                            vm.pendingInspectionExport=it
+                            if(json) inspectionJsonExporter.launch("roleplay-card.json") else inspectionTextExporter.launch("roleplay-card.txt")
+                        }})
                     tab == 0 -> SessionScreen(sessions, cards, vm::openChat, { deleting = it }, { tab = 1 },
                         { importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) })
                     tab == 1 -> CharacterScreen(cards, { editCharacter = CharacterCard(name = "") }, ::importFile,
@@ -180,7 +201,7 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
                         {exportJson(null)},{editingDefaults=true},::importResource)
                     else -> SettingsScreen(connections, dark, { vm.setDark(it) }, showTokenUsage, vm::setShowTokenUsage,
                         { editConnection = ProviderTemplates.all.first().copy(id = newId()) }, { editConnection = it },
-                        { exportJson(null) }, { importKind=null; importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, {helpOpen=true})
+                        { exportJson(null) }, { importKind=null; importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, {helpOpen=true}, {inspectorOpen=true})
                 }
             }
         }
@@ -327,7 +348,7 @@ private fun EmptyPanel(title: String, detail: String, action: (() -> Unit)? = nu
 @Composable
 private fun SettingsScreen(connections: List<ConnectionProfile>, dark: Boolean, onDark: (Boolean) -> Unit,
     showTokenUsage: Boolean, onShowTokenUsage: (Boolean) -> Unit,
-    onNew: () -> Unit, onEdit: (ConnectionProfile) -> Unit, onBackup: () -> Unit, onImport: () -> Unit, onHelp: () -> Unit) {
+    onNew: () -> Unit, onEdit: (ConnectionProfile) -> Unit, onBackup: () -> Unit, onImport: () -> Unit, onHelp: () -> Unit, onInspector: ()->Unit) {
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { PageHeading("设置", "连接模型，调整你的使用方式") }
         item {
@@ -343,6 +364,14 @@ private fun SettingsScreen(connections: List<ConnectionProfile>, dark: Boolean, 
                     Text(profile.name, fontWeight = FontWeight.SemiBold)
                     Text("${profile.provider} · ${profile.model}", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        item {
+            OutlinedCard(onClick=onInspector,modifier=Modifier.fillMaxWidth().testTag("settings-card-inspector")) {
+                Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+                    Text("角色卡解析器",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
+                    Text("查看角色设定与内嵌世界书，搜索内容，导出明文 TXT / JSON",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

@@ -4,6 +4,7 @@ import androidx.room.*
 import com.moyer.roleplay.core.appJson
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.*
 
 @Serializable
 @Entity(tableName = "resources")
@@ -42,7 +43,18 @@ fun RoleplayConfig.json(): String = appJson.encodeToString(this)
 
 @Serializable
 data class LoreBook(val entries: List<LoreEntry> = emptyList(), val recursive: Boolean = false,
-    val scanDepth: Int = 4, val budget: Int = 2048)
+    val scanDepth: Int = 4, val budget: Int = 2048, val followSessionBudget: Boolean? = null)
+
+// Older imports invented a 2048 cap even when the original book had no token_budget.
+// Infer only that legacy default; keep explicit file limits and edited non-default caps.
+fun ResourceAsset.followsSessionLoreBudget(book: LoreBook): Boolean = book.followSessionBudget ?: (
+    book.budget == 2048 && (sourceJson.isBlank() || runCatching {
+        val source = appJson.parseToJsonElement(sourceJson) as? JsonObject
+        source != null && (source["token_budget"] as? JsonPrimitive)?.intOrNull == null
+    }.getOrDefault(false)))
+
+fun ResourceAsset.effectiveLoreBudget(book: LoreBook, sessionBudget: Int): Int =
+    if (followsSessionLoreBudget(book)) sessionBudget else book.budget
 
 @Serializable
 data class LoreEntry(
