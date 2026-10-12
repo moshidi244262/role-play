@@ -404,13 +404,13 @@ internal fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, conne
     LaunchedEffect(session.id, messages.size, messages.lastOrNull()?.content, followLatest) {
         // Layout snapshots may resume this effect while the lazy list is still being measured.
         withFrameNanos { }; kotlinx.coroutines.yield()
-        if (messages.isNotEmpty() && followLatest && !scroll.isScrollInProgress) scroll.scrollToItem(messages.size)
+        if (messages.isNotEmpty() && followLatest && !scroll.isScrollInProgress) scroll.requestScrollToItem(messages.size)
     }
     LaunchedEffect(session.id) {
         snapshotFlow { followLatest && !scroll.isScrollInProgress && scroll.canScrollForward }
             .distinctUntilChanged().collect { shouldFollow -> if (shouldFollow) {
                 withFrameNanos { }; kotlinx.coroutines.yield()
-                if (followLatest && !scroll.isScrollInProgress && scroll.canScrollForward) scroll.scrollToItem(currentCount)
+                if (followLatest && !scroll.isScrollInProgress && scroll.canScrollForward) scroll.requestScrollToItem(currentCount)
             } }
     }
     Column(Modifier.fillMaxSize().imePadding()) {
