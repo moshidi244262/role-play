@@ -497,10 +497,12 @@ internal fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, conne
                     if (message.status != "complete") Text(when (message.status) {
                         "streaming" -> "生成中 · 已收到的文字会自动保存"
                         "interrupted" -> "生成已中断 · 已保留收到的内容"
+                        "length_limited" -> "已达输出或模型上下文上限 · 可提高输出上限或点击续写"
+                        "filtered" -> "服务商终止了生成 · 已保留收到的内容"
                         else -> "生成失败 · 可重新发送或续写"
                     }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 5.dp))
-                    if(showTokenUsage && (message.inputTokens!=null || message.outputTokens!=null)) Text("用量 ${message.inputTokens ?: "—"} / ${message.outputTokens ?: "—"} tokens" +
+                    if(showTokenUsage && (message.inputTokens!=null || message.outputTokens!=null)) Text("输入 ${message.inputTokens ?: "—"} · 输出 ${message.outputTokens ?: "—"} tokens" +
                         (message.cachedTokens?.let {" · 缓存命中 $it"} ?: ""),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -626,7 +628,8 @@ private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDi
     var protocol by remember(initial.id) { mutableStateOf(initial.protocol) }
     var model by remember(initial.id) { mutableStateOf(initial.model) }
     var key by remember(initial.id) { mutableStateOf("") }
-    var output by remember(initial.id) { mutableStateOf(initial.maxOutputTokens.toString()) }
+    var output by remember(initial.id) { mutableStateOf(initial.maxOutputTokens.takeIf { it > 0 }?.toString() ?: "8192") }
+    var providerDefaultOutput by remember(initial.id) { mutableStateOf(initial.maxOutputTokens == 0) }
     var version by remember(initial.id) { mutableStateOf(initial.versionHeader) }
     var advanced by remember { mutableStateOf(false) }
     var costConfirmation by remember { mutableStateOf(false) }
@@ -643,7 +646,7 @@ private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDi
         }
     }
     fun profile() = initial.copy(name = name, provider = provider, baseUrl = url, protocol = protocol,
-        model = model, maxOutputTokens = output.toIntOrNull() ?: 0, versionHeader = version)
+        model = model, maxOutputTokens = if (providerDefaultOutput && protocol != Protocol.ANTHROPIC_MESSAGES) 0 else output.toIntOrNull() ?: -1, versionHeader = version)
     LaunchedEffect(initial.id) { vm.modelChoices.value = vm.savedModels.value[initial.id].orEmpty(); vm.connectionFeedback.value = null }
     LaunchedEffect(choices) { if (model.isBlank() && choices.isNotEmpty()) model = choices.first() }
     AlertDialog(onDismissRequest = { if (!busy) onDismiss() }, title = { Text("API 连接") }, text = {
@@ -677,6 +680,22 @@ private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDi
                     FilterChip(selected=model==id,onClick={model=id},label={Text(id)})
                 } }
             }
+            Text("单次回复长度", style = MaterialTheme.typography.titleSmall)
+            if (protocol != Protocol.ANTHROPIC_MESSAGES) Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(checked = providerDefaultOutput, onCheckedChange = { providerDefaultOutput = it }, modifier = Modifier.testTag("provider-default-output"))
+                Text("使用服务商默认输出上限", modifier = Modifier.padding(start = 8.dp))
+            }
+            if (!providerDefaultOutput || protocol == Protocol.ANTHROPIC_MESSAGES) {
+                EditorField("最大输出 token 数", output, { output = it.filter(Char::isDigit) }, true)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(2048,4096,8192,16384,32768,65536).forEach { limit ->
+                        FilterChip(selected = output == limit.toString(), onClick = { output = limit.toString() }, label = { Text(limit.toString()) })
+                    }
+                }
+            }
+            Text(if (protocol == Protocol.ANTHROPIC_MESSAGES) "Claude Messages 要求明确的输出上限。数值须在所选模型支持范围内；上限不等于保证输出长度。"
+                else if (providerDefaultOutput) "App 不发送输出限额参数，服务商仍会使用自己的默认上限；这不代表无限输出。"
+                else "限制一次请求的生成量，须在模型支持范围内；不决定上下文容量，部分模型的思考也占用额度。", style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "收起高级选项" else "高级选项") }
             if (advanced) {
                 Text("API 协议", style = MaterialTheme.typography.labelLarge)
@@ -686,7 +705,6 @@ private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDi
                         Text(when (choice) { Protocol.CHAT_COMPLETIONS -> "Chat Completions"; Protocol.RESPONSES -> "Responses"; Protocol.ANTHROPIC_MESSAGES -> "Claude Messages" })
                     }
                 }
-                EditorField("最大输出 token 数", output, { output = it.filter(Char::isDigit) }, true)
                 if (protocol == Protocol.ANTHROPIC_MESSAGES) EditorField("API 版本头", version, { version = it }, true)
             }
             OutlinedButton(onClick = { finishTyping(); costConfirmation = true }, enabled = !busy && model.isNotBlank(), modifier = Modifier.fillMaxWidth()) {

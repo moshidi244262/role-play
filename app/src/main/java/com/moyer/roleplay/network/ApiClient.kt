@@ -16,6 +16,7 @@ import java.io.EOFException
 sealed interface ApiEvent {
     data class Text(val value: String) : ApiEvent
     data class Usage(val input: Int? = null, val output: Int? = null, val cached: Int? = null) : ApiEvent
+    data class End(val status: String) : ApiEvent
     data object Done : ApiEvent
 }
 
@@ -35,30 +36,33 @@ object ApiWire {
         return base.newBuilder().encodedPath("$prefix/$resource").build()
     }
 
-    fun body(profile: ConnectionProfile, messages: List<PromptMessage>): JsonObject = buildJsonObject {
-        put("model", profile.model)
-        put("stream", true)
-        when (profile.protocol) {
-            Protocol.CHAT_COMPLETIONS -> {
-                put("messages", JsonArray(messages.map { buildJsonObject {
-                    put("role", it.role); put("content", it.content)
-                } }))
-                put(if (profile.provider == "OpenAI") "max_completion_tokens" else "max_tokens", profile.maxOutputTokens)
-                if(profile.provider in setOf("OpenAI","DeepSeek","Grok")) put("stream_options",buildJsonObject { put("include_usage",true) })
-            }
-            Protocol.RESPONSES -> {
-                put("store", false)
-                put("input", JsonArray(messages.map { buildJsonObject {
-                    put("role", it.role); put("content", it.content)
-                } }))
-                put("max_output_tokens", profile.maxOutputTokens)
-            }
-            Protocol.ANTHROPIC_MESSAGES -> {
-                put("system", messages.filter { it.role == "system" }.joinToString("\n\n") { it.content })
-                put("messages", JsonArray(messages.filter { it.role != "system" }.map { buildJsonObject {
-                    put("role", it.role); put("content", it.content)
-                } }))
-                put("max_tokens", profile.maxOutputTokens)
+    fun body(profile: ConnectionProfile, messages: List<PromptMessage>): JsonObject {
+        profile.validateOutputLimit()
+        return buildJsonObject {
+            put("model", profile.model)
+            put("stream", true)
+            when (profile.protocol) {
+                Protocol.CHAT_COMPLETIONS -> {
+                    put("messages", JsonArray(messages.map { buildJsonObject {
+                        put("role", it.role); put("content", it.content)
+                    } }))
+                    if (profile.maxOutputTokens > 0) put(if (profile.provider == "OpenAI") "max_completion_tokens" else "max_tokens", profile.maxOutputTokens)
+                    if(profile.provider in setOf("OpenAI","DeepSeek","Grok")) put("stream_options",buildJsonObject { put("include_usage",true) })
+                }
+                Protocol.RESPONSES -> {
+                    put("store", false)
+                    put("input", JsonArray(messages.map { buildJsonObject {
+                        put("role", it.role); put("content", it.content)
+                    } }))
+                    if (profile.maxOutputTokens > 0) put("max_output_tokens", profile.maxOutputTokens)
+                }
+                Protocol.ANTHROPIC_MESSAGES -> {
+                    put("system", messages.filter { it.role == "system" }.joinToString("\n\n") { it.content })
+                    put("messages", JsonArray(messages.filter { it.role != "system" }.map { buildJsonObject {
+                        put("role", it.role); put("content", it.content)
+                    } }))
+                    put("max_tokens", profile.maxOutputTokens)
+                }
             }
         }
     }
@@ -72,7 +76,7 @@ object ApiWire {
         if (data == "[DONE]") return listOf(ApiEvent.Done)
         val root = runCatching { appJson.parseToJsonElement(data).jsonObject }.getOrNull()
             ?: throw ApiFailure("服务商返回了无效的流式数据")
-        if (root["error"]?.takeUnless { it == JsonNull } != null || root["type"]?.jsonPrimitive?.content in setOf("error", "response.failed", "response.incomplete")) {
+        if (root["error"]?.takeUnless { it == JsonNull } != null || root["type"]?.jsonPrimitive?.content in setOf("error", "response.failed")) {
             throw ApiFailure("服务商中断了生成，请检查模型权限、额度或输出上限")
         }
         return buildList {
@@ -87,16 +91,24 @@ object ApiWire {
                             it["completion_tokens"]?.jsonPrimitive?.intOrNull,
                             it["prompt_cache_hit_tokens"]?.jsonPrimitive?.intOrNull ?: (it["prompt_tokens_details"] as? JsonObject)?.get("cached_tokens")?.jsonPrimitive?.intOrNull))
                     }
+                    choice?.get("finish_reason")?.jsonPrimitive?.contentOrNull?.let {
+                        add(ApiEvent.End(endStatus(it)))
+                    }
                     // Wait for [DONE] to capture any trailing usage-only chunk.
                 }
                 Protocol.RESPONSES -> when (root["type"]?.jsonPrimitive?.content) {
                     "response.output_text.delta", "response.refusal.delta" ->
                         root["delta"]?.jsonPrimitive?.contentOrNull?.let { add(ApiEvent.Text(it)) }
-                    "response.completed" -> {
-                        root["response"]?.jsonObject?.get("usage")?.jsonObject?.let {
+                    "response.completed", "response.incomplete" -> {
+                        val response = root["response"]?.jsonObject
+                        response?.get("usage")?.takeIf { it is JsonObject }?.jsonObject?.let {
                             add(ApiEvent.Usage(it["input_tokens"]?.jsonPrimitive?.intOrNull,
                                 it["output_tokens"]?.jsonPrimitive?.intOrNull,
                                 (it["input_tokens_details"] as? JsonObject)?.get("cached_tokens")?.jsonPrimitive?.intOrNull))
+                        }
+                        if (root["type"]?.jsonPrimitive?.content == "response.incomplete") {
+                            val reason = (response?.get("incomplete_details") as? JsonObject)?.get("reason")?.jsonPrimitive?.contentOrNull
+                            add(ApiEvent.End(endStatus(reason ?: "incomplete")))
                         }
                         add(ApiEvent.Done)
                     }
@@ -106,6 +118,9 @@ object ApiWire {
                         val usage=(root["usage"] ?: (root["message"] as? JsonObject)?.get("usage")) as? JsonObject
                         usage?.let { add(ApiEvent.Usage(it["input_tokens"]?.jsonPrimitive?.intOrNull,
                             it["output_tokens"]?.jsonPrimitive?.intOrNull,it["cache_read_input_tokens"]?.jsonPrimitive?.intOrNull)) }
+                        (root["delta"] as? JsonObject)?.get("stop_reason")?.jsonPrimitive?.contentOrNull?.let {
+                            add(ApiEvent.End(endStatus(it)))
+                        }
                     }
                     "content_block_delta" -> root["delta"]?.jsonObject?.let {
                         if (it["type"]?.jsonPrimitive?.content == "text_delta")
@@ -115,6 +130,13 @@ object ApiWire {
                 }
             }
         }
+    }
+
+    private fun endStatus(reason: String): String = when (reason) {
+        "stop", "end_turn", "stop_sequence" -> "complete"
+        "length", "max_tokens", "max_output_tokens", "model_context_window_exceeded" -> "length_limited"
+        "content_filter", "refusal" -> "filtered"
+        else -> "interrupted"
     }
 
     fun httpError(code: Int): String = when (code) {

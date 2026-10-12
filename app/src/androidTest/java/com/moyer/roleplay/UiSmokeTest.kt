@@ -216,6 +216,38 @@ class UiSmokeTest {
         screenshot("04-library")
     }
 
+    @Test fun replyLengthSettingsPersistAsSpecifiedOrProviderDefault() {
+        val connection=com.moyer.roleplay.data.ProviderTemplates.all.first().copy(id=com.moyer.roleplay.data.newId(),name="长度设置测试")
+        compose.runOnUiThread {vm.saveConnection(connection,"",{})}
+        compose.waitUntil(10000) {vm.connections.value.any {it.id==connection.id}}
+        try {
+            compose.onNode(hasText("设置") and hasClickAction()).performClick()
+            compose.onNodeWithText("长度设置测试").performScrollTo().performClick()
+            compose.onNodeWithText("最大输出 token 数").performScrollTo().performTextReplacement("16384")
+            screenshot("14-explicit-output-limit")
+            compose.onNodeWithText("保存").performClick()
+            compose.waitUntil(10000) {vm.connections.value.any {it.id==connection.id && it.maxOutputTokens==16384}}
+            compose.onNodeWithText("长度设置测试").performScrollTo().performClick()
+            compose.onNodeWithTag("provider-default-output").performScrollTo().performClick()
+            compose.onNodeWithText("最大输出 token 数").assertDoesNotExist()
+            screenshot("15-provider-default-output")
+            compose.onNodeWithText("保存").performClick()
+            compose.waitUntil(10000) {vm.connections.value.any {it.id==connection.id && it.maxOutputTokens==0}}
+            compose.activityRule.scenario.recreate()
+            compose.runOnUiThread {vm=ViewModelProvider(compose.activity)[ChatViewModel::class.java]}
+            compose.waitUntil(10000) {vm.ready.value}
+            compose.onNode(hasText("设置") and hasClickAction()).performClick()
+            compose.onNodeWithText("长度设置测试").performScrollTo().performClick()
+            compose.onNodeWithTag("provider-default-output").performScrollTo().assertIsOn()
+            compose.onNodeWithText("取消").performClick()
+        } finally {
+            kotlinx.coroutines.runBlocking {kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val database=(compose.activity.application as RolePlayApplication).repository.database
+                database.runInTransaction {database.openHelper.writableDatabase.execSQL("DELETE FROM connections WHERE id = ?",arrayOf(connection.id))}
+            }}
+        }
+    }
+
     @Test fun tokenSettingPersistsForFreshViewModelAndActivity() {
         compose.runOnUiThread { vm.setShowTokenUsage(true) }
         compose.onNode(hasText("设置") and hasClickAction()).performClick()

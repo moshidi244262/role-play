@@ -107,7 +107,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             if (previous != null && !sameCredentialTarget(previous, profile)) cacheModels(profile.id, emptyList())
             ApiWire.endpoint(profile, "models").also { require(it.isHttps) { "服务地址必须使用 HTTPS" } }
             require(profile.name.isNotBlank()) { "请填写连接名称" }
-            require(profile.maxOutputTokens in 1..65536) { "输出上限须在 1～65536 之间" }
+            profile.validateOutputLimit()
             if (newKey.isBlank()) {
                 val existing = dao.connection(profile.id)
                 require(existing == null || sameCredentialTarget(existing, profile)) { "服务商或地址已改变，请重新填写密钥" }
@@ -198,6 +198,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val accumulated = StringBuilder()
             var lastFlush = 0L
             var inputTokens: Int? = null; var outputTokens: Int? = null; var cachedTokens: Int? = null
+            var endStatus = "complete"
             try {
                 val session = requireNotNull(dao.session(id)) { "会话不存在" }
                 val profile = session.connectionId?.let { dao.connection(it) }?.let { sessionProfile(it, readConfig(session.config)) }
@@ -211,6 +212,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val preparedHistory = originalHistory + listOfNotNull(userText?.let { ChatMessage(sessionId=id,role="user",content=it,position=(originalHistory.maxOfOrNull { m -> m.position } ?: -1)+1) })
                 val assets=dao.allResources()
                 val report=withContext(Dispatchers.Default) { PromptBuilder.compile(session,preparedHistory,assets,if(continueStory) "continue" else if(answerExisting) "regenerate" else "normal") }
+                if (report.trimmedMessages > 0) notice.value = "本轮上下文已省略 ${report.trimmedMessages} 条旧消息；可在会话设定中提高预算或关闭 App 裁剪。本地记录仍保留。"
                 val currentReply = mutations.withLock {
                     repository.startTurn(id, userText).also {
                         if (userText != null) pendingDrafts.remove(id)
@@ -232,9 +234,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         inputTokens=event.input ?: inputTokens; outputTokens=event.output ?: outputTokens; cachedTokens=event.cached ?: cachedTokens
                         dao.updateUsage(currentReply.id,inputTokens,outputTokens,cachedTokens)
                     }
+                    if (event is ApiEvent.End) endStatus = event.status
                 }
-                require(accumulated.isNotBlank()) { "模型没有返回文字，请检查模型能力或输出上限" }
-                dao.updateMessage(currentReply.id, accumulated.toString(), "complete")
+                require(accumulated.isNotBlank() || endStatus != "complete") { "模型没有返回文字，请检查模型能力或输出上限" }
+                dao.updateMessage(currentReply.id, accumulated.toString(), endStatus)
                 dao.touch(id, System.currentTimeMillis())
             } catch (e: CancellationException) {
                 withContext(NonCancellable) { reply?.let { dao.updateMessage(it.id, accumulated.toString(), "interrupted") } }
@@ -395,7 +398,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val history=dao.history(id); val assets=dao.allResources()
         val report=withContext(Dispatchers.Default) { PromptBuilder.compile(session,history,assets) }
         val profile=session.connectionId?.let { dao.connection(it) }?.let { sessionProfile(it, readConfig(session.config)) }
-        return report.readable() + if(profile?.protocol==Protocol.ANTHROPIC_MESSAGES)
+        val output = profile?.let { if (it.maxOutputTokens == 0) "输出上限：跟随服务商默认（App 不发送输出限额参数；服务商仍有限制）" else "本次 API 最大输出：${it.maxOutputTokens} tokens（模型可能提前结束；以服务商支持范围为准）" }
+        return (output?.plus("\n\n") ?: "") + report.readable() + if(profile?.protocol==Protocol.ANTHROPIC_MESSAGES)
             "\nClaude Messages 会将所有 system 提示合并到独立 system 字段；system 深度位置会转换为全局提示。\n\n实际请求正文（不含密钥）：\n${ApiWire.body(profile,report.messages)}" else ""
     }
 

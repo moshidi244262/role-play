@@ -63,7 +63,8 @@ object BackupCodec {
             require(greetings.size<=100 && greetings.all {it.length<=32000}) {"角色备选开场白超出限制"}
         }
         bundle.characters.forEach(::card)
-        require(bundle.connections.all { it.name.isNotBlank() && it.maxOutputTokens in 1..65536 }) { "连接配置无效" }
+        require(bundle.connections.all { it.name.isNotBlank() }) { "连接配置无效" }
+        bundle.connections.forEach { it.validateOutputLimit() }
         require(bundle.sessions.all {
             it.characterId in characterIds && (it.connectionId == null || it.connectionId in connectionIds) &&
                 it.title.isNotBlank() && it.createdAt >= 0 && it.updatedAt >= 0
@@ -75,7 +76,7 @@ object BackupCodec {
             card(snapshot)
         }
         require(bundle.messages.all { it.sessionId in sessionIds && it.role in setOf("user", "assistant") &&
-            it.status in setOf("complete", "streaming", "interrupted", "failed") && it.position >= 0 && it.createdAt >= 0
+            it.status in setOf("complete", "streaming", "interrupted", "failed", "length_limited", "filtered") && it.position >= 0 && it.createdAt >= 0
         }) { "消息引用或状态无效" }
         require(bundle.messages.map { it.sessionId to it.position }.distinct().size == bundle.messages.size) { "消息排序重复" }
     }

@@ -78,15 +78,15 @@ class AppearanceUiTest {
                 emptyList(), emptyList(), "", false, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, { _, _, _ -> }, {},
                 emptyMap(), emptyList(), null, false, {}, {}, showTokenUsage = visible.value, onShowTokenUsage = { visible.value = it })
         } }
-        compose.onNodeWithText("用量 123 / 45 tokens · 缓存命中 6").assertIsDisplayed()
+        compose.onNodeWithText("输入 123 · 输出 45 tokens · 缓存命中 6").assertIsDisplayed()
         compose.onNodeWithContentDescription("角色头像：阅读").assertDoesNotExist()
         compose.onNodeWithContentDescription("会话菜单").performClick()
         compose.onNodeWithText("隐藏 Token 用量").performClick()
-        compose.onNodeWithText("用量 123 / 45 tokens · 缓存命中 6").assertDoesNotExist()
+        compose.onNodeWithText("输入 123 · 输出 45 tokens · 缓存命中 6").assertDoesNotExist()
         compose.onNodeWithText("你好。").assertIsDisplayed()
         compose.onNodeWithContentDescription("会话菜单").performClick()
         compose.onNodeWithText("显示 Token 用量").performClick()
-        compose.onNodeWithText("用量 123 / 45 tokens · 缓存命中 6").assertIsDisplayed()
+        compose.onNodeWithText("输入 123 · 输出 45 tokens · 缓存命中 6").assertIsDisplayed()
     }
 
     @Test fun galleryImageIsSizedAndOrientedThenPersistsThroughDatabaseAndBackup() = runBlocking {

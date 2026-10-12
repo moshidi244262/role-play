@@ -3,10 +3,12 @@ package com.moyer.roleplay.core
 import com.moyer.roleplay.data.*
 
 data class PromptReport(val messages: List<PromptMessage>, val hits: List<String> = emptyList(),
-    val warnings: List<String> = emptyList(), val trimmedMessages: Int = 0, val loreBudgetSummary: String = "") {
+    val warnings: List<String> = emptyList(), val trimmedMessages: Int = 0, val loreBudgetSummary: String = "",
+    val contextBudgetChars: Int = 48000) {
     fun readable() = buildString {
         appendLine("世界书命中：${hits.size} 条；裁剪旧消息：$trimmedMessages 条")
         appendLine("估算上下文：${messages.sumOf { it.content.length }} 字符 / 约 ${messages.sumOf { estimateTokens(it.content) + 8 }} tokens（非精确计数）")
+        appendLine(if (contextBudgetChars == 0) "App 上下文裁剪：不限制，保留全部有效聊天；仍受模型上下文容量限制" else "App 上下文字符预算：$contextBudgetChars 字符")
         if (loreBudgetSummary.isNotBlank()) appendLine(loreBudgetSummary)
         if (hits.isNotEmpty()) appendLine(hits.joinToString("\n"))
         if (warnings.isNotEmpty()) appendLine("提示：\n" + warnings.distinct().joinToString("\n"))
@@ -127,9 +129,10 @@ object PromptBuilder {
         val expanded=segments.map { segment -> if(segment.history) segment else segment.copy(raw=expander.expand(segment.raw)) }
         val expandedDepth=depth.map { it.copy(raw=expander.expand(it.raw)) }.filter { it.raw.isNotBlank() }
         val fixed=expanded.filter { !it.history }.sumOf { it.raw.length } + expandedDepth.sumOf { it.raw.length } + style?.newChatPrompt.orEmpty().length
-        require(fixed < config.historyBudgetChars) { "角色与固定资料超过上下文字符预算，请减少资料或在会话设定中提高预算" }
-        val recent=valid.takeLast(200)
-        var available=config.historyBudgetChars-fixed
+        val unlimited = config.historyBudgetChars == 0
+        require(unlimited || fixed < config.historyBudgetChars) { "角色与固定资料超过上下文字符预算，请减少资料或在会话设定中提高预算" }
+        val recent=valid
+        var available=if (unlimited) Long.MAX_VALUE else config.historyBudgetChars.toLong()-fixed
         val dialogue=mutableListOf<PromptMessage>()
         for(index in recent.indices.reversed()) {
             val message=recent[index]
@@ -155,9 +158,9 @@ object PromptBuilder {
                 }
             }
         }
-        require(result.sumOf { it.content.length } <= config.historyBudgetChars) { "宏或示例展开后超出上下文预算，请减少资料或提高预算" }
+        require(unlimited || result.sumOf { it.content.length.toLong() } <= config.historyBudgetChars) { "宏或示例展开后超出上下文预算，请减少资料或提高预算" }
         if(config.references().any { id -> assets.none { it.id==id } }) warnings += "有绑定资料未找到，已跳过；可重新选择资料"
-        return PromptReport(result,lore.entries.map { "${it.bookName} / ${it.entry.name}（${it.reason}）" },(warnings+expander.warnings).distinct(),valid.size-dialogue.size,lore.budgetSummary)
+        return PromptReport(result,lore.entries.map { "${it.bookName} / ${it.entry.name}（${it.reason}）" },(warnings+expander.warnings).distinct(),valid.size-dialogue.size,lore.budgetSummary,config.historyBudgetChars)
     }
 
     private fun exampleMessages(text: String, char: String, user: String, template: String, expander: MacroExpander): List<PromptMessage> {

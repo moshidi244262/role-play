@@ -40,6 +40,14 @@ data class ConnectionProfile(
     val versionHeader: String = "2023-06-01"
 )
 
+// Zero omits the optional output parameter; it does not remove server/model limits.
+fun ConnectionProfile.validateOutputLimit() {
+    require(maxOutputTokens in 0..1048576) { "输出上限须在 1～1048576 之间，或选择服务商默认" }
+    require(protocol != Protocol.ANTHROPIC_MESSAGES || maxOutputTokens > 0) {
+        "Claude Messages 协议要求填写最大输出 token 数，不能使用服务商默认"
+    }
+}
+
 @Serializable
 @Entity(tableName = "sessions", indices = [Index("updatedAt")])
 data class ChatSession(

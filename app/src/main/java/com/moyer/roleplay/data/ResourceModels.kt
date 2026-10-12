@@ -33,7 +33,7 @@ data class RoleplayConfig(
         require(narrativeView in setOf("auto", "first", "third") && modelOverride.length <= 200) { "叙述视角或模型 ID 无效" }
         require(lorebookIds.size <= 64 && regexIds.size <= 32 && playerName.length <= 100) { "绑定资料或玩家名称超出限制" }
         require(scanDepth in 0..100 && loreBudget in 0..16384 && authorDepth in 0..100 &&
-            historyBudgetChars in 2000..200000) { "会话预算或扫描深度无效" }
+            (historyBudgetChars == 0 || historyBudgetChars in 2000..2000000)) { "会话预算或扫描深度无效（上下文预算为 0 或 2000～2000000 字符）" }
         require(persona.length <= 16000 && authorNote.length <= 16000 && memory.length <= 32000) { "身份、记忆或作者注释过长" }
     }
 }

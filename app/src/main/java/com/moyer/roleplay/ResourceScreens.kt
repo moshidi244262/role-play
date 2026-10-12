@@ -105,6 +105,7 @@ private fun keys(text: String)=text.split('\n',',','，').map { it.trim() }.filt
 fun ConfigEditor(initial: RoleplayConfig,assets: List<ResourceAsset>,title: String,onDismiss: ()->Unit,onSave: (RoleplayConfig)->Unit) {
     var config by remember { mutableStateOf(initial) }
     var advanced by remember { mutableStateOf(false) }
+    var finiteContextBudget by remember { mutableStateOf(initial.historyBudgetChars.takeIf { it > 0 } ?: 48000) }
     var error by remember { mutableStateOf<String?>(null) }
     AlertDialog(onDismissRequest=onDismiss,title={Text(title)},text={
         Column(Modifier.heightIn(max=500.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -142,8 +143,15 @@ fun ConfigEditor(initial: RoleplayConfig,assets: List<ResourceAsset>,title: Stri
                     val book=appJson.decodeFromString<LoreBook>(asset.payload)
                     Text("${asset.name}：" + if(asset.followsSessionLoreBudget(book)) "跟随会话预算" else "本书另有限额 ${book.budget} tokens；可在资料库调整",style=MaterialTheme.typography.bodySmall)
                 }
-                NumberField("上下文字符预算",config.historyBudgetChars) {config=config.copy(historyBudgetChars=it)}
-                Text("预算为字符和 token 估算，会从最早的聊天记录开始裁剪；本地记录仍完整保留。",style=MaterialTheme.typography.bodySmall)
+                Check("不限制 App 上下文（不裁剪旧消息）",config.historyBudgetChars==0) { unlimited ->
+                    if (unlimited) {
+                        finiteContextBudget=config.historyBudgetChars.takeIf { it > 0 } ?: 48000
+                        config=config.copy(historyBudgetChars=0)
+                    } else config=config.copy(historyBudgetChars=finiteContextBudget)
+                }
+                if (config.historyBudgetChars!=0) NumberField("上下文字符预算",config.historyBudgetChars) {config=config.copy(historyBudgetChars=it)}
+                Text(if (config.historyBudgetChars==0) "将发送全部有效聊天记录，仍受模型上下文容量限制；超出后服务商可能拒绝请求。世界书预算继续独立生效。"
+                    else "范围 2000～2000000 字符（不是 tokens）；超出时从最早的消息开始裁剪并提示，本地记录仍保留。",style=MaterialTheme.typography.bodySmall)
             }
             error?.let { Text(it,color=MaterialTheme.colorScheme.error) }
         }
