@@ -553,7 +553,7 @@ private fun EditorField(label: String, value: String, onChange: (String) -> Unit
         modifier = Modifier.fillMaxWidth(), singleLine = single, minLines = if (single) 1 else 2, maxLines = if (single) 1 else 8)
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDismiss: () -> Unit) {
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
