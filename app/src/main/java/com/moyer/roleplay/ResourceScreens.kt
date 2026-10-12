@@ -95,8 +95,8 @@ internal fun Field(label: String,value: String,onChange: (String)->Unit,single: 
 }
 
 @Composable
-private fun Check(label: String,checked: Boolean,onChange: (Boolean)->Unit) {
-    Row(verticalAlignment=Alignment.CenterVertically) { Checkbox(checked=checked,onCheckedChange=onChange); Text(label,Modifier.weight(1f)) }
+private fun Check(label: String,checked: Boolean,modifier: Modifier=Modifier,onChange: (Boolean)->Unit) {
+    Row(verticalAlignment=Alignment.CenterVertically) { Checkbox(checked=checked,onCheckedChange=onChange,modifier=modifier); Text(label,Modifier.weight(1f)) }
 }
 
 @Composable
@@ -156,7 +156,7 @@ fun ConfigEditor(initial: RoleplayConfig,assets: List<ResourceAsset>,title: Stri
                     val book=appJson.decodeFromString<LoreBook>(asset.payload)
                     Text("${asset.name}：" + if(asset.followsSessionLoreBudget(book)) "跟随会话预算" else "本书另有限额 ${book.budget} tokens；可在资料库调整",style=MaterialTheme.typography.bodySmall)
                 }
-                Check("不限制 App 上下文（不裁剪旧消息）",config.historyBudgetChars==0) { unlimited ->
+                Check("不限制 App 上下文（不裁剪旧消息）",config.historyBudgetChars==0,Modifier.testTag("unlimited-context")) { unlimited ->
                     if (unlimited) {
                         finiteContextBudget=config.historyBudgetChars.takeIf { it > 0 } ?: 48000
                         config=config.copy(historyBudgetChars=0)
