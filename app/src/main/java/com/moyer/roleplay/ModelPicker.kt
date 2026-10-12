@@ -14,11 +14,11 @@ internal fun ModelPicker(selected: String, models: List<String>, busy: Boolean, 
     onRefresh: ()->Unit, onSelect: (String)->Unit, onDismiss: ()->Unit) {
     var query by remember { mutableStateOf("") }
     var manual by remember { mutableStateOf(selected) }
-    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
-    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val distinct = remember(models) { models.filter(String::isNotBlank).distinct().sorted() }
     val visible = remember(distinct,query) { distinct.filter { it.contains(query.trim(),ignoreCase=true) } }
     AlertDialog(onDismissRequest=onDismiss,title={Text("选择模型")},text={
+        val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+        val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
         Column(Modifier.heightIn(max=500.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
             feedback?.let {Text(it,style=MaterialTheme.typography.bodySmall)}
             OutlinedTextField(query,{query=it},label={Text("搜索模型")},singleLine=true,modifier=Modifier.fillMaxWidth())

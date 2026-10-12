@@ -556,9 +556,6 @@ private fun EditorField(label: String, value: String, onChange: (String) -> Unit
 @OptIn(ExperimentalLayoutApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDismiss: () -> Unit) {
-    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
-    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
-    fun finishTyping() { focusManager.clearFocus(); keyboard?.hide() }
     var provider by remember(initial.id) { mutableStateOf(initial.provider) }
     var name by remember(initial.id) { mutableStateOf(initial.name) }
     var url by remember(initial.id) { mutableStateOf(initial.baseUrl) }
@@ -586,6 +583,9 @@ private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDi
     LaunchedEffect(initial.id) { vm.modelChoices.value = vm.savedModels.value[initial.id].orEmpty(); vm.connectionFeedback.value = null }
     LaunchedEffect(choices) { if (model.isBlank() && choices.isNotEmpty()) model = choices.first() }
     AlertDialog(onDismissRequest = { if (!busy) onDismiss() }, title = { Text("API 连接") }, text = {
+        val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+        val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+        fun finishTyping() { focusManager.clearFocus(); keyboard?.hide() }
         Column(Modifier.heightIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f,fill=false).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -630,8 +630,11 @@ private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDi
             }
             }
         }
-    }, confirmButton = { TextButton(enabled = !busy && name.isNotBlank() && url.isNotBlank(), onClick = {
-        finishTyping(); vm.saveConnection(profile(), key, onDismiss)
+    }, confirmButton = {
+        val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+        val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+        TextButton(enabled = !busy && name.isNotBlank() && url.isNotBlank(), onClick = {
+        focusManager.clearFocus(); keyboard?.hide(); vm.saveConnection(profile(), key, onDismiss)
     }) { Text("保存") } }, dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("取消") } })
     if (costConfirmation) AlertDialog(onDismissRequest = { costConfirmation = false }, title = { Text("测试连接") },
         text = { Text("将向所选 API 发送一条简短测试消息，会产生少量 API 用量。") },
