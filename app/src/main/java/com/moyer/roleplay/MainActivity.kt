@@ -92,6 +92,8 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
         val modelChoices by vm.modelChoices.collectAsStateWithLifecycle()
         val connectionFeedback by vm.connectionFeedback.collectAsStateWithLifecycle()
         var tab by rememberSaveable { mutableIntStateOf(0) }
+        var helpOpen by rememberSaveable { mutableStateOf(false) }
+        var importKind by rememberSaveable { mutableStateOf<String?>(null) }
         var editCharacter by remember { mutableStateOf<CharacterCard?>(null) }
         var editConnection by remember { mutableStateOf<ConnectionProfile?>(null) }
         var deleting by remember { mutableStateOf<ChatSession?>(null) }
@@ -113,7 +115,9 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
             if (uri != null) vm.exportTo(uri, exportTarget, true)
         }
         val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null) vm.previewImport(uri)
+            val kind=importKind
+            importKind=null
+            if (uri != null) vm.previewImport(uri,kind)
         }
         val assetExporter=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
             if(uri!=null) exportAsset?.let {vm.exportAsset(uri,it)}
@@ -121,7 +125,11 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
         val cardExporter=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) {uri->
             if(uri!=null) exportCard?.let {vm.exportCharacter(uri,it)}
         }
-        fun importFile() { importer.launch(arrayOf("application/json","text/plain","application/octet-stream","image/png")) }
+        fun importFile() { importKind=null; importer.launch(arrayOf("application/json","text/plain","application/octet-stream","image/png")) }
+        fun importResource(kind: String) {
+            importKind=kind
+            importer.launch(arrayOf("application/json","text/plain","application/octet-stream"))
+        }
         fun exportJson(id: String?) {
             exportTarget = id ?: "all"
             jsonExporter.launch(if (id == null) "roleplay-backup.json" else "roleplay-chat.json")
@@ -136,7 +144,7 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
         Scaffold(snackbarHost = { SnackbarHost(snackbar) }, bottomBar = {
             if (selectedId == null) NavigationBar {
                 navigation.forEachIndexed { index, item ->
-                    NavigationBarItem(selected = tab == index, onClick = { tab = index },
+                    NavigationBarItem(selected = tab == index, onClick = { tab = index; helpOpen=false },
                         icon = { Icon(item.icon, item.title) }, label = { Text(item.title) })
                 }
             }
@@ -158,6 +166,7 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
                         onModel = { vm.selectModel(session.id, it) },
                         showTokenUsage = showTokenUsage, onShowTokenUsage = vm::setShowTokenUsage,
                         onPreview = { scope.launch { runCatching { vm.promptPreview(session.id) }.onSuccess { preview = it }.onFailure {vm.notice.value="上下文无法组装，请检查会话预算与资料"} } })
+                    tab == 3 && helpOpen -> HelpScreen { helpOpen=false }
                     tab == 0 -> SessionScreen(sessions, cards, vm::openChat, { deleting = it }, { tab = 1 },
                         { importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) })
                     tab == 1 -> CharacterScreen(cards, { editCharacter = CharacterCard(name = "") }, ::importFile,
@@ -168,10 +177,10 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
                     tab == 2 -> ResourceScreen(resources,operationBusy,::importFile,{kind ->
                         editingAsset=ResourceAsset(kind=kind,name="",payload=when(kind) {"lorebook"->appJson.encodeToString(LoreBook());"preset"->appJson.encodeToString(StylePreset());else->appJson.encodeToString(RegexRules())})
                     },{editingAsset=it},vm::toggleResource,{deletingAsset=it},{exportAsset=it;assetExporter.launch("roleplay-${it.kind}.json")},
-                        {exportJson(null)},{editingDefaults=true})
+                        {exportJson(null)},{editingDefaults=true},::importResource)
                     else -> SettingsScreen(connections, dark, { vm.setDark(it) }, showTokenUsage, vm::setShowTokenUsage,
                         { editConnection = ProviderTemplates.all.first().copy(id = newId()) }, { editConnection = it },
-                        { exportJson(null) }, { importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) })
+                        { exportJson(null) }, { importKind=null; importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, {helpOpen=true})
                 }
             }
         }
@@ -179,7 +188,8 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
             vm.saveCharacter(card) { editCharacter = null }
         } }
         editConnection?.let { ConnectionEditor(it, vm, { editConnection = null }) }
-        editingAsset?.let {asset->ResourceEditor(asset,{editingAsset=null}) {vm.saveResource(it) {editingAsset=null}}}
+        editingAsset?.let {asset->ResourceEditor(asset,{editingAsset=null}, {vm.saveResource(it) {editingAsset=null}},
+            onImport=if(asset.kind in setOf("preset","lorebook")) {{editingAsset=null;importResource(asset.kind)}} else null)}
         deletingAsset?.let {asset->AlertDialog(onDismissRequest={deletingAsset=null},title={Text("删除资料？")},
             text={Text("将删除“${asset.name}”，并解除它与角色及会话的绑定。已有聊天文字会保留。")},
             confirmButton={TextButton(onClick={vm.deleteResource(asset.id);deletingAsset=null}) {Text("删除")}},
@@ -317,7 +327,7 @@ private fun EmptyPanel(title: String, detail: String, action: (() -> Unit)? = nu
 @Composable
 private fun SettingsScreen(connections: List<ConnectionProfile>, dark: Boolean, onDark: (Boolean) -> Unit,
     showTokenUsage: Boolean, onShowTokenUsage: (Boolean) -> Unit,
-    onNew: () -> Unit, onEdit: (ConnectionProfile) -> Unit, onBackup: () -> Unit, onImport: () -> Unit) {
+    onNew: () -> Unit, onEdit: (ConnectionProfile) -> Unit, onBackup: () -> Unit, onImport: () -> Unit, onHelp: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { PageHeading("设置", "连接模型，调整你的使用方式") }
         item {
@@ -333,6 +343,14 @@ private fun SettingsScreen(connections: List<ConnectionProfile>, dark: Boolean, 
                     Text(profile.name, fontWeight = FontWeight.SemiBold)
                     Text("${profile.provider} · ${profile.model}", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        item {
+            OutlinedCard(onClick=onHelp,modifier=Modifier.fillMaxWidth().testTag("settings-help")) {
+                Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+                    Text("帮助",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
+                    Text("角色卡、世界书、预设、正则与思维链 · 可搜索",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

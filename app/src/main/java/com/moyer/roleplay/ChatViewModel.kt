@@ -206,7 +206,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val originalHistory = dao.history(id)
                 val preparedHistory = originalHistory + listOfNotNull(userText?.let { ChatMessage(sessionId=id,role="user",content=it,position=(originalHistory.maxOfOrNull { m -> m.position } ?: -1)+1) })
                 val assets=dao.allResources()
-                val report=withContext(Dispatchers.Default) { PromptBuilder.compile(session,preparedHistory,assets) }
+                val report=withContext(Dispatchers.Default) { PromptBuilder.compile(session,preparedHistory,assets,if(continueStory) "continue" else if(answerExisting) "regenerate" else "normal") }
                 val currentReply = mutations.withLock {
                     repository.startTurn(id, userText).also {
                         if (userText != null) pendingDrafts.remove(id)
@@ -288,7 +288,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         } } finally { operationBusy.value = false }
     }
 
-    fun previewImport(uri: Uri) = viewModelScope.launch {
+    fun previewImport(uri: Uri, expectedKind: String? = null) = viewModelScope.launch {
         if (operationBusy.value) return@launch
         operationBusy.value = true
         try { safe {
@@ -312,7 +312,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 } ?: "导入资料"
             }
             pendingImport.value = withContext(Dispatchers.Default) {
-                val pack=CommunityImporter.decode(bytes,filename)
+                val pack=CommunityImporter.decode(bytes,filename,expectedKind)
                 if(pack.characters.isNotEmpty() && PngCardCodec.isPng(bytes)) {
                     val bounds=BitmapFactory.Options().apply { inJustDecodeBounds=true }
                     BitmapFactory.decodeByteArray(bytes,0,bytes.size,bounds)

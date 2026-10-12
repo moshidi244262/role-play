@@ -56,7 +56,7 @@ class CommunityImportTest {
         val asset=CommunityImporter.decode(json.toByteArray()).resources.single()
         val blocks=appJson.decodeFromString<StylePreset>(asset.payload).blocks
         assertEquals(listOf("B","A","trigger"),blocks.map {it.name})
-        assertTrue(blocks.first().enabled);assertFalse(blocks[1].enabled);assertFalse(blocks[2].enabled)
+        assertTrue(blocks.first().enabled);assertFalse(blocks[1].enabled);assertTrue(blocks[2].enabled);assertEquals(listOf("continue"),blocks[2].triggers)
         assertFalse(asset.sourceJson.contains("hidden-key"));assertTrue(asset.notes.contains("不会随预设生效"))
     }
 

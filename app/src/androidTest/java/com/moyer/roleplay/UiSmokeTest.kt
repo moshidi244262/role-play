@@ -8,6 +8,7 @@ import android.graphics.Bitmap
 import java.io.File
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.runner.RunWith
 import org.junit.rules.TestWatcher
@@ -32,6 +33,38 @@ class UiSmokeTest {
         compose.waitUntil(15000) {vm.ready.value}
         compose.waitForIdle()
         if(compose.onAllNodesWithContentDescription("返回").fetchSemanticsNodes().isNotEmpty()) compose.onNodeWithContentDescription("返回").performClick()
+    }
+
+    @Test fun settingsHelpSearchAndTypedFileImportRemainAvailableAfterRecreation() {
+        compose.onNode(hasText("设置") and hasClickAction()).performClick()
+        compose.onNodeWithTag("settings-help").performScrollTo().performClick()
+        compose.onNodeWithTag("help-search").performTextInput("思维链")
+        screenshot("08-help-search")
+        compose.onNodeWithTag("help-article-cot").performClick()
+        screenshot("09-help-detail")
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithText("思维链是什么？需要开启吗？").assertExists()
+        compose.onNodeWithContentDescription("返回帮助或设置").performClick()
+        compose.onNodeWithTag("help-search").assertTextContains("思维链")
+        compose.onNodeWithContentDescription("返回帮助或设置").performClick()
+        compose.onNodeWithTag("settings-help").assertExists()
+        val file=File(compose.activity.cacheDir,"typed-preset.json")
+        file.writeText("{\"prompts\":[{\"identifier\":\"a\",\"content\":\"{{setvar::style::简洁}}{{getvar::style}}\"}],\"extensions\":{\"regex_scripts\":[{\"findRegex\":\"/旧/g\",\"replaceString\":\"新\"}]}}")
+        compose.runOnUiThread {vm.previewImport(Uri.fromFile(file),"preset")}
+        compose.waitUntil(10000) {vm.pendingImport.value!=null}
+        compose.onNodeWithText("导入副本").performClick()
+        compose.waitUntil(10000) {vm.resources.value.any {it.name=="typed-preset"}}
+        compose.activityRule.scenario.recreate()
+        compose.runOnUiThread {vm=ViewModelProvider(compose.activity)[ChatViewModel::class.java]}
+        compose.waitUntil(10000) {vm.resources.value.any {it.name=="typed-preset"}}
+        val imported=vm.resources.value.first {it.name=="typed-preset"}
+        assertEquals(1,com.moyer.roleplay.core.appJson.decodeFromString<com.moyer.roleplay.data.StylePreset>(imported.payload).regexRules.size)
+        compose.onNode(hasText("资料库") and hasClickAction()).performClick()
+        compose.onNodeWithText("导入世界书文件").assertExists()
+        compose.onNodeWithText("预设").performClick()
+        compose.onNodeWithText("导入预设文件").assertExists()
+        screenshot("10-preset-import")
+        file.delete()
     }
 
     @Test fun characterStartsConversationAndDraftSurvivesActivityRecreation() {

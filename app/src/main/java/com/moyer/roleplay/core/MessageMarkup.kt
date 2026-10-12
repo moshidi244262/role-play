@@ -45,6 +45,11 @@ object MessageMarkup {
                 }
                 if (node !is Element) return
                 val name = node.normalName()
+                if (name in setOf("think", "thinking", "reasoning", "analysis")) {
+                    flush()
+                    result += MessageBlock.Disclosure("思考说明（模型生成的文字）",render(node.childNodes(),level+1),false)
+                    return
+                }
                 if (name == "details") {
                     flush()
                     val summary = node.children().firstOrNull { it.normalName() == "summary" }

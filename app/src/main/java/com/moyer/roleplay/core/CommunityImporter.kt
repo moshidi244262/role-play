@@ -30,7 +30,17 @@ object CommunityImporter {
         is JsonArray -> JsonArray(value.map { scrub(it) })
         else -> value
     }
-    fun decode(bytes: ByteArray, filename: String = "导入资料"): ImportPreview {
+    fun decode(bytes: ByteArray, filename: String = "导入资料", expectedKind: String? = null): ImportPreview {
+        val result = decodeAny(bytes, filename)
+        if (expectedKind != null) {
+            require(expectedKind in setOf("preset", "lorebook")) { "导入类型无效" }
+            require(result.backup == null && result.characters.isEmpty() && result.resources.any { it.kind == expectedKind }) {
+                "请选择${if(expectedKind == "preset") "预设" else "世界书"} JSON 文件；其他资料可使用通用导入入口"
+            }
+        }
+        return result
+    }
+    private fun decodeAny(bytes: ByteArray, filename: String): ImportPreview {
         require(bytes.size <= BackupCodec.MAX_BYTES) { "文件超过 16 MB，暂不支持" }
         val text = if (PngCardCodec.isPng(bytes)) PngCardCodec.extract(bytes) else bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")
         val root = try { appJson.parseToJsonElement(text) } catch (_: Exception) { throw IllegalArgumentException("文件不是有效的 JSON 或 PNG 角色卡") }
@@ -51,7 +61,7 @@ object CommunityImporter {
         }
         return when {
             "entries" in clean -> lore(clean, clean.string("name", name)).let { ImportPreview(resources = listOf(it), warnings = it.notes.lines().filter(String::isNotBlank)) }
-            "findRegex" in clean || "regex_scripts" in clean -> regex(clean["regex_scripts"] ?: clean, clean.string("scriptName", name)).let {
+            ("findRegex" in clean || "regex_scripts" in clean) && "prompts" !in clean -> regex(clean["regex_scripts"] ?: clean, clean.string("scriptName", name)).let {
                 ImportPreview(resources = listOf(it), warnings = it.notes.lines().filter(String::isNotBlank)) }
             "prompts" in clean || ("system_prompt" in clean && "name" !in clean) -> preset(clean, name).let {
                 ImportPreview(resources = listOf(it), warnings = it.notes.lines().filter(String::isNotBlank)) }
@@ -107,16 +117,17 @@ object CommunityImporter {
             val title = e.string("comment", e.string("name", "条目 ${index+1}"))
             val p = e["position"] ?: ext["position"]
             val number = (p as? JsonPrimitive)?.intOrNull
-            val position = when (number) { 0 -> "before_char"; 1 -> "after_char"; 4 -> "depth"; else ->
-                (p as? JsonPrimitive)?.contentOrNull?.takeIf { it in setOf("before_char","after_char","depth") } ?: if (p == null) "after_char" else "unsupported" }
+            val position = when (number) { 0 -> "before_char"; 1 -> "after_char"; 2 -> "before_author"; 3 -> "after_author"; 4 -> "depth"; 5 -> "before_examples"; 6 -> "after_examples"; else ->
+                (p as? JsonPrimitive)?.contentOrNull?.takeIf { it in setOf("before_char","after_char","depth","before_examples","after_examples","before_author","after_author") } ?: if (p == null) "after_char" else "unsupported" }
             val advanced = listOf("sticky","cooldown","delay").any { e.int(it, ext.int(it)) != 0 } ||
                 e.string("group", ext.string("group")).isNotBlank() || e.bool("vectorized", ext.bool("vectorized")) ||
-                (e.bool("useProbability", ext.bool("useProbability")) && e.int("probability", ext.int("probability", 100)) != 100)
+                e.bool("delayUntilRecursion", ext.bool("delayUntilRecursion")) ||
+                ((e["triggers"] ?: ext["triggers"]) as? JsonArray)?.isNotEmpty() == true
             val primary=e.strings(if ("key" in e) "key" else "keys")
             val secondary=e.strings(if ("keysecondary" in e) "keysecondary" else "secondary_keys")
             val badRegex=(primary+secondary).any {it.startsWith('/') && runCatching {RegexEngine.compile(it.replace("{{char}}","角色").replace("{{user}}","玩家"))}.isFailure}
             val enabled = !e.bool("disable") && e.bool("enabled", true) && position != "unsupported" && !advanced && !badRegex
-            if (position == "unsupported" || advanced) notes += "$title：高级位置、概率、分组或定时触发未支持，条目暂不启用；原始字段已保留"
+            if (position == "unsupported" || advanced) notes += "$title：高级位置、分组、向量、生成类型或定时触发未支持，条目暂不启用；原始字段已保留"
             if(badRegex) notes+="$title：关键词正则包含不支持的语法，条目暂不启用"
             LoreEntry(name = title, keys = primary, secondaryKeys = secondary,
                 selective = e.bool("selective"), logic = when(e.int("selectiveLogic", ext.int("selectiveLogic"))) {
@@ -128,7 +139,13 @@ object CommunityImporter {
                 caseSensitive = e.bool("case_sensitive", e.bool("caseSensitive", ext.bool("caseSensitive"))),
                 scanDepth = (e["scanDepth"] as? JsonPrimitive)?.intOrNull?.coerceIn(0,100),
                 preventRecursion = e.bool("preventRecursion", ext.bool("preventRecursion")),
-                excludeRecursion = e.bool("excludeRecursion", ext.bool("excludeRecursion")))
+                excludeRecursion = e.bool("excludeRecursion", ext.bool("excludeRecursion")),
+                matchWholeWords = e.bool("matchWholeWords", ext.bool("matchWholeWords")),
+                probability = if(e.bool("useProbability", ext.bool("useProbability", true))) e.int("probability", ext.int("probability",100)).coerceIn(0,100) else 100,
+                matchPersona = e.bool("matchPersonaDescription", ext.bool("matchPersonaDescription")),
+                matchDescription = e.bool("matchCharacterDescription", ext.bool("matchCharacterDescription")),
+                matchPersonality = e.bool("matchCharacterPersonality", ext.bool("matchCharacterPersonality")),
+                matchScenario = e.bool("matchScenario", ext.bool("matchScenario")))
         }
         val book = LoreBook(entries, root.bool("recursive_scanning", root.bool("recursive")),
             root.int("scan_depth", 4).coerceIn(0,100), root.int("token_budget", 2048).coerceIn(0,16384))
@@ -139,40 +156,62 @@ object CommunityImporter {
     fun preset(root: JsonObject, name: String): ResourceAsset {
         val notes = mutableListOf<String>()
         val prompts = root["prompts"] as? JsonArray
-        val orderList = ((root["prompt_order"] as? JsonArray)?.lastOrNull() as? JsonObject)?.get("order") as? JsonArray
-        val order = orderList?.mapNotNull { it as? JsonObject } ?: emptyList()
+        require(prompts == null || prompts.size <= 1000) { "预设超过 1000 个提示块" }
+        val orders = (root["prompt_order"] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
+        val orderList = (orders.firstOrNull { it.int("character_id") == 100001 } ?: orders.lastOrNull())?.get("order") as? JsonArray
+        if(orders.size > 1) notes += "文件含多个排列，采用全局排列（100001 优先）；未逐角色应用其他排列"
+        val order = orderList?.mapNotNull { it as? JsonObject }.orEmpty()
         val rank = order.mapIndexed { i,e -> e.string("identifier") to i }.toMap()
         val enabled = order.associate { it.string("identifier") to it.bool("enabled", true) }
+        val markers = setOf("worldInfoBefore", "worldInfoAfter", "charDescription", "charPersonality", "scenario", "personaDescription", "dialogueExamples", "chatHistory")
         val blocks = if (prompts != null) prompts.mapIndexedNotNull { index,value ->
-            val p = value as? JsonObject ?: return@mapIndexedNotNull null
-            if (p.bool("marker")) return@mapIndexedNotNull null
+            val p = value as? JsonObject ?: throw IllegalArgumentException("提示块格式无效")
             val id = p.string("identifier", index.toString())
-            val content = p.string("content"); if (content.isBlank()) return@mapIndexedNotNull null
-            val depth = p.int("injection_depth", 0).coerceIn(0,100)
+            val marker = if(p.bool("marker")) id else ""
+            if(marker.isNotBlank() && marker !in markers) {
+                notes += "${p.string("name",id)}：未知占位块未加载，原始字段已保留"
+                return@mapIndexedNotNull null
+            }
             val role = p.string("role", "system")
-            val trigger=p["injection_trigger"]
-            val unsupportedTrigger=(trigger is JsonArray && trigger.isNotEmpty()) || (trigger is JsonPrimitive && trigger.booleanOrNull==true)
-            val supported = role in setOf("system","user","assistant") && !unsupportedTrigger
+            val trigger = p["injection_trigger"]
+            val triggers = if(trigger is JsonArray) trigger.mapNotNull { (it as? JsonPrimitive)?.contentOrNull } else emptyList()
+            val supported = role in setOf("system","user","assistant") && triggers.all { it in setOf("normal","continue","regenerate","swipe") } && !(trigger is JsonPrimitive && trigger.booleanOrNull == true)
             if (!supported) notes += "${p.string("name", id)}：提示块触发方式或角色不兼容，暂不启用"
-            (rank[id] ?: index) to PromptBlock(name = p.string("name", id), content = content,
-                enabled = supported && (enabled[id] ?: p.bool("enabled", true)),
-                role = if (role in setOf("system","user","assistant")) role else "system",
-                position = if (p.int("injection_position") == 1 || id == "jailbreak") "depth" else "after_char", depth = depth)
+            (rank[id] ?: (order.size + index)) to PromptBlock(name = p.string("name", id), content = p.string("content"),
+                enabled = supported && (if(orderList != null) enabled[id] == true else p.bool("enabled", true)),
+                role = role.takeIf { it in setOf("system","user","assistant") } ?: "system",
+                position = if(p.int("injection_position") == 1) "depth" else "after_char",
+                depth = p.int("injection_depth",0).coerceIn(0,100), marker = marker,
+                order = p.int("injection_order",100), triggers = if(supported) triggers else emptyList())
         }.sortedBy { it.first }.map { it.second } else listOfNotNull(
             root.string("system_prompt", root.string("content")).takeIf(String::isNotBlank)?.let { PromptBlock(name="主提示", content=it) },
             root.string("post_history_instructions").takeIf(String::isNotBlank)?.let { PromptBlock(name="后置提示", content=it,position="depth") }
         )
-        require(blocks.isNotEmpty()) { "预设没有可用的文字提示块" }
-        if (listOf("temperature","top_p","openai_max_tokens","custom_url","reverse_proxy").any { it in root })
-            notes += "服务地址、密钥和生成参数不会随预设生效；请在 API 连接中配置。标记块由本 App 的角色与聊天结构提供"
-        return ResourceAsset(kind="preset", name=name.take(200), payload=appJson.encodeToString(StylePreset(blocks)),
-            sourceJson=root.toString(),notes=notes.distinct().joinToString("\n")).also { it.validate() }
+        require(blocks.any { it.marker.isNotBlank() || it.content.isNotBlank() }) { "预设没有可用的文字提示块或占位块" }
+        val ext = root["extensions"] as? JsonObject
+        val scripts = (ext?.get("regex_scripts") ?: root["regex_scripts"]) as? JsonArray
+        val rules = scripts?.takeIf { it.isNotEmpty() }?.let {
+            val asset = regex(it, "$name · 内嵌正则")
+            notes += asset.notes.lines().filter(String::isNotBlank)
+            appJson.decodeFromString<RegexRules>(asset.payload).rules
+        }.orEmpty()
+        if(rules.isNotEmpty()) notes += "内嵌正则 ${rules.size} 条随此预设启用；可在预设编辑页逐条调整，无需重复绑定"
+        if(ext?.keys?.any { it != "regex_scripts" } == true) notes += "扩展字段已保留；SPreset、酒馆助手、MVU、JavaScript 与 STscript 不执行。依赖它们的动态变量或界面可能不完整"
+        if(listOf("temperature","top_p","openai_max_tokens","custom_url","reverse_proxy").any { it in root })
+            notes += "服务地址、密钥和采样参数不会随预设生效；输出上限使用 API 连接的配置"
+        notes += "支持顺序、占位块、普通/续写/重生成触发与常用宏。setvar/getvar 变量仅用于本次组装，不是跨消息的 MVU 状态"
+        val preset = StylePreset(blocks, ordered=prompts != null, regexRules=rules,
+            newChatPrompt=root.string("new_chat_prompt"), newExamplePrompt=root.string("new_example_chat_prompt"),
+            worldInfoFormat=root.string("wi_format","{0}"), scenarioFormat=root.string("scenario_format","{{scenario}}"),
+            personalityFormat=root.string("personality_format","{{personality}}"))
+        return ResourceAsset(kind="preset", name=name.take(200), payload=appJson.encodeToString(preset),
+            sourceJson=root.toString(),notes=notes.distinct().take(100).joinToString("\n")).also { it.validate() }
     }
 
     fun regex(root: JsonElement, name: String): ResourceAsset {
         val notes = mutableListOf<String>()
         val list = if (root is JsonArray) root else JsonArray(listOf(root))
-        require(list.size <= 32) { "一个规则文件最多包含 32 条正则，请拆分导入" }
+        require(list.size <= 256) { "一个规则文件最多包含 256 条正则，请拆分导入" }
         val rules = list.mapIndexed { i,value ->
             val e = value as? JsonObject ?: throw IllegalArgumentException("正则条目格式无效")
             val pattern = e.string("findRegex"); val title = e.string("scriptName", "规则 ${i+1}")
@@ -188,6 +227,7 @@ object CommunityImporter {
                 minDepth=e.int("minDepth").coerceAtLeast(0),maxDepth=e.int("maxDepth",-1),
                 substituteFind=substitution,trims=e.strings("trimStrings"))
         }
+        if(rules.count { it.enabled } > 32) notes += "启用规则超过 32 条，每次只执行绑定顺序中的前 32 条；请停用不需要的规则"
         notes += "正则保留消息原文，只改变显示或发送给模型的文字；不执行 JavaScript、HTML 或斜杠命令"
         return ResourceAsset(kind="regex",name=name.take(200),payload=appJson.encodeToString(RegexRules(rules)),
             sourceJson=root.toString(),notes=notes.distinct().joinToString("\n")).also { it.validate() }

@@ -51,15 +51,22 @@ data class LoreEntry(
     val logic: String = "and_any", val constant: Boolean = false, val enabled: Boolean = true,
     val content: String = "", val order: Int = 100, val position: String = "after_char",
     val depth: Int = 4, val role: String = "system", val caseSensitive: Boolean = false,
-    val scanDepth: Int? = null, val preventRecursion: Boolean = false, val excludeRecursion: Boolean = false
+    val scanDepth: Int? = null, val preventRecursion: Boolean = false, val excludeRecursion: Boolean = false,
+    val matchWholeWords: Boolean = false, val probability: Int = 100,
+    val matchPersona: Boolean = false, val matchDescription: Boolean = false,
+    val matchPersonality: Boolean = false, val matchScenario: Boolean = false
 )
 
 @Serializable
-data class StylePreset(val blocks: List<PromptBlock> = emptyList())
+data class StylePreset(val blocks: List<PromptBlock> = emptyList(), val ordered: Boolean = false,
+    val regexRules: List<TextRule> = emptyList(), val newChatPrompt: String = "",
+    val newExamplePrompt: String = "", val worldInfoFormat: String = "{0}",
+    val scenarioFormat: String = "{{scenario}}", val personalityFormat: String = "{{personality}}")
 
 @Serializable
 data class PromptBlock(val id: String = newId(), val name: String = "风格提示", val content: String = "",
-    val enabled: Boolean = true, val role: String = "system", val position: String = "after_char", val depth: Int = 0)
+    val enabled: Boolean = true, val role: String = "system", val position: String = "after_char", val depth: Int = 0,
+    val marker: String = "", val order: Int = 100, val triggers: List<String> = emptyList())
 
 @Serializable
 data class RegexRules(val rules: List<TextRule> = emptyList())
@@ -81,22 +88,29 @@ fun ResourceAsset.validate() {
             require(book.entries.map { it.id }.distinct().size == book.entries.size) { "世界书条目 ID 重复" }
             book.entries.forEach {
                 require(it.depth in 0..100 && (it.scanDepth == null || it.scanDepth in 0..100) &&
-                    it.role in setOf("system", "user", "assistant") && it.position in setOf("before_char", "after_char", "depth") &&
+                    it.role in setOf("system", "user", "assistant") && it.position in setOf("before_char", "after_char", "depth", "before_examples", "after_examples", "before_author", "after_author") && it.probability in 0..100 &&
                     it.logic in setOf("and_any", "and_all", "not_any", "not_all") && it.keys.size <= 100 && it.secondaryKeys.size <= 100) { "世界书条目配置无效" }
             }
         }
         "preset" -> appJson.decodeFromString<StylePreset>(payload).also { preset ->
-            require(preset.blocks.size <= 200) { "预设提示块过多" }
+            require(preset.blocks.size <= 1000 && preset.blocks.map { it.id }.distinct().size == preset.blocks.size) { "预设提示块过多或 ID 重复" }
             preset.blocks.forEach { require(it.depth in 0..100 && it.role in setOf("system", "user", "assistant") &&
-                it.position in setOf("before_char", "after_char", "depth")) { "预设提示块无效" } }
+                it.position in setOf("before_char", "after_char", "depth") &&
+                it.triggers.all { trigger -> trigger in setOf("normal", "continue", "regenerate", "swipe") } &&
+                it.marker in setOf("", "worldInfoBefore", "worldInfoAfter", "charDescription", "charPersonality", "scenario", "personaDescription", "dialogueExamples", "chatHistory")) { "预设提示块无效" } }
+            validateRules(preset.regexRules)
         }
         "regex" -> appJson.decodeFromString<RegexRules>(payload).also { rules ->
-            require(rules.rules.size <= 32) { "一个规则集最多 32 条正则" }
-            rules.rules.forEach { require(it.pattern.length <= 4096 && it.minDepth in 0..10000 && it.maxDepth in -1..10000 &&
-                it.targets.all { target -> target in setOf("user", "assistant", "lore") } && it.substituteFind in 0..2) { "正则配置无效" } }
+            validateRules(rules.rules)
         }
         else -> throw IllegalArgumentException("不支持的资料类型")
     }
+}
+
+private fun validateRules(rules: List<TextRule>) {
+    require(rules.size <= 256) { "一个规则集最多 256 条正则" }
+    rules.forEach { require(it.pattern.length <= 4096 && it.minDepth in 0..10000 && it.maxDepth in -1..10000 &&
+        it.targets.all { target -> target in setOf("user", "assistant", "lore") } && it.substituteFind in 0..2) { "正则配置无效" } }
 }
 
 fun configDefaults(defaults: RoleplayConfig, card: RoleplayConfig): RoleplayConfig = card.copy(

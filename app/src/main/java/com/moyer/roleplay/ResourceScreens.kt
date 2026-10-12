@@ -3,6 +3,7 @@ package com.moyer.roleplay
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -22,7 +23,7 @@ fun resourceLabel(kind: String) = when(kind) { "lorebook"->"世界书"; "preset"
 @Composable
 fun ResourceScreen(assets: List<ResourceAsset>, busy: Boolean, onImport: ()->Unit, onNew: (String)->Unit,
     onEdit: (ResourceAsset)->Unit, onToggle: (ResourceAsset)->Unit, onDelete: (ResourceAsset)->Unit,
-    onExport: (ResourceAsset)->Unit, onBackup: ()->Unit, onDefaults: ()->Unit) {
+    onExport: (ResourceAsset)->Unit, onBackup: ()->Unit, onDefaults: ()->Unit, onImportKind: ((String)->Unit)? = null) {
     var kind by remember { mutableStateOf("lorebook") }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal=20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
         item {
@@ -31,6 +32,11 @@ fun ResourceScreen(assets: List<ResourceAsset>, busy: Boolean, onImport: ()->Uni
                 Text("按需要绑定到角色或会话",color=MaterialTheme.colorScheme.onSurfaceVariant)
                 Row { TextButton(onClick=onImport,enabled=!busy) { Text("导入 JSON / PNG") }
                     TextButton(onClick={onNew(kind)}) { Text("新建${resourceLabel(kind)}") } }
+                if(kind in setOf("preset","lorebook") && onImportKind != null) {
+                    OutlinedButton(onClick={onImportKind(kind)},enabled=!busy,modifier=Modifier.fillMaxWidth()) {
+                        Text("导入${resourceLabel(kind)}文件")
+                    }
+                }
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     listOf("lorebook","preset","regex").forEach { value ->
                         FilterChip(selected=kind==value,onClick={kind=value},label={Text(resourceLabel(value))})
@@ -91,6 +97,7 @@ private fun Options(label: String,values: List<Pair<String,String>>,selected: St
 }
 
 private val positions=listOf("before_char" to "角色描述前","after_char" to "角色描述后","depth" to "聊天内指定深度")
+private val lorePositions=positions+listOf("before_examples" to "示例对话前","after_examples" to "示例对话后","before_author" to "作者注释前","after_author" to "作者注释后")
 private val roles=listOf("system" to "System","user" to "User","assistant" to "Assistant")
 private fun keys(text: String)=text.split('\n',',','，').map { it.trim() }.filter(String::isNotBlank)
 
@@ -149,7 +156,7 @@ private fun NumberField(label: String,value: Int,onChange: (Int)->Unit) {
 }
 
 @Composable
-fun ResourceEditor(asset: ResourceAsset,onDismiss: ()->Unit,onSave: (ResourceAsset)->Unit) {
+fun ResourceEditor(asset: ResourceAsset,onDismiss: ()->Unit,onSave: (ResourceAsset)->Unit,onImport: (() -> Unit)? = null) {
     var name by remember(asset.id) { mutableStateOf(asset.name) }
     var lore by remember(asset.id) { mutableStateOf(if(asset.kind=="lorebook") appJson.decodeFromString<LoreBook>(asset.payload) else LoreBook()) }
     var preset by remember(asset.id) { mutableStateOf(if(asset.kind=="preset") appJson.decodeFromString<StylePreset>(asset.payload) else StylePreset()) }
@@ -160,61 +167,93 @@ fun ResourceEditor(asset: ResourceAsset,onDismiss: ()->Unit,onSave: (ResourceAss
     var error by remember { mutableStateOf<String?>(null) }
     var notes by remember { mutableStateOf(false) }
     var advanced by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    var enabledOnly by remember { mutableStateOf(false) }
+    var showRules by remember { mutableStateOf(false) }
+    fun matches(title: String,content: String,enabled: Boolean) = (!enabledOnly || enabled) &&
+        (query.isBlank() || title.contains(query,true) || content.contains(query,true))
     AlertDialog(onDismissRequest=onDismiss,title={Text("编辑${resourceLabel(asset.kind)}")},text={
-        Column(Modifier.heightIn(max=500.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
-            Field("名称",name,{name=it},true)
-            if(asset.notes.isNotBlank()) {
-                TextButton(onClick={notes=!notes}) {Text("导入兼容提示")}
-                if(notes) Text(asset.notes,style=MaterialTheme.typography.bodySmall)
+        LazyColumn(Modifier.heightIn(max=500.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+            item {
+                Field("名称",name,{name=it},true)
+                if(onImport != null) OutlinedButton(onClick=onImport) {Text("导入${resourceLabel(asset.kind)}文件")}
+                if(asset.notes.isNotBlank()) {
+                    TextButton(onClick={notes=!notes}) {Text("导入兼容提示")}
+                    if(notes) Text(asset.notes,style=MaterialTheme.typography.bodySmall)
+                }
+                Field("搜索条目或内容",query,{query=it},true)
+                Check("只看启用的条目",enabledOnly) {enabledOnly=it}
             }
             when(asset.kind) {
                 "lorebook" -> {
-                    TextButton(onClick={advanced=!advanced}) {Text("世界书扫描选项")}
-                    if(advanced) {
-                        Check("递归扫描（最多 4 轮）",lore.recursive) {lore=lore.copy(recursive=it)}
-                        NumberField("默认扫描深度",lore.scanDepth) {lore=lore.copy(scanDepth=it)}
-                        NumberField("本书预算（估算 tokens）",lore.budget) {lore=lore.copy(budget=it)}
+                    item {
+                        TextButton(onClick={advanced=!advanced}) {Text("世界书扫描选项")}
+                        if(advanced) {
+                            Check("递归扫描（最多 4 轮）",lore.recursive) {lore=lore.copy(recursive=it)}
+                            NumberField("默认扫描深度",lore.scanDepth) {lore=lore.copy(scanDepth=it)}
+                            NumberField("本书预算（估算 tokens）",lore.budget) {lore=lore.copy(budget=it)}
+                        }
                     }
-                    lore.entries.forEach { value -> ItemControls(value.name,value.enabled,{entry=value},
-                        {lore=lore.copy(entries=lore.entries.map {if(it.id==value.id) it.copy(enabled=!it.enabled) else it})},
-                        {lore=lore.copy(entries=lore.entries.filter {it.id!=value.id})}) }
-                    OutlinedButton(onClick={entry=LoreEntry()}) {Text("添加条目")}
+                    items(lore.entries.filter {matches(it.name,it.content,it.enabled)},key={it.id}) {value ->
+                        ItemControls(value.name,value.enabled,{entry=value},
+                            {lore=lore.copy(entries=lore.entries.map {if(it.id==value.id) it.copy(enabled=!it.enabled) else it})},
+                            {lore=lore.copy(entries=lore.entries.filter {it.id!=value.id})})
+                    }
+                    item {OutlinedButton(onClick={entry=LoreEntry()}) {Text("添加条目")}}
                 }
                 "preset" -> {
-                    Text("按列表顺序插入。风格提示与角色事实分别组装；角色附加提示独立保留。",style=MaterialTheme.typography.bodySmall)
-                    preset.blocks.forEachIndexed { index,value ->
-                        ItemControls(value.name,value.enabled,{block=value},
-                            {preset=preset.copy(blocks=preset.blocks.map {if(it.id==value.id) it.copy(enabled=!it.enabled) else it})},
-                            {preset=preset.copy(blocks=preset.blocks.filter {it.id!=value.id})})
-                        if(index>0) TextButton(onClick={
-                            val list=preset.blocks.toMutableList(); list.removeAt(index);list.add(index-1,value);preset=preset.copy(blocks=list)
-                        }) {Text("上移")}
+                    item {
+                        Text(if(preset.ordered) "按照酒馆排列发送；占位块填入真实角色、世界书和聊天。空块用于分组。" else "按列表顺序插入；角色附加提示独立保留。",style=MaterialTheme.typography.bodySmall)
+                        if(preset.regexRules.isNotEmpty()) TextButton(onClick={showRules=!showRules}) {Text(if(showRules) "查看提示块" else "内嵌正则（${preset.regexRules.size} 条）")}
                     }
-                    OutlinedButton(onClick={block=PromptBlock()}) {Text("添加提示块")}
+                    if(showRules) {
+                        items(preset.regexRules.filter {matches(it.name,it.pattern+it.replacement,it.enabled)},key={it.id}) {value ->
+                            ItemControls(value.name,value.enabled,{rule=value},
+                                {preset=preset.copy(regexRules=preset.regexRules.map {if(it.id==value.id) it.copy(enabled=!it.enabled) else it})},
+                                {preset=preset.copy(regexRules=preset.regexRules.filter {it.id!=value.id})})
+                        }
+                    } else {
+                        items(preset.blocks.filter {matches(it.name,it.content,it.enabled)},key={it.id}) {value ->
+                            Column {
+                                ItemControls(value.name+(if(value.marker.isNotBlank()) " · 占位块" else ""),value.enabled,{block=value},
+                                    {preset=preset.copy(blocks=preset.blocks.map {if(it.id==value.id) it.copy(enabled=!it.enabled) else it})},
+                                    {preset=preset.copy(blocks=preset.blocks.filter {it.id!=value.id})})
+                                val index=preset.blocks.indexOfFirst { it.id==value.id }
+                                if(index>0) TextButton(onClick={
+                                    val list=preset.blocks.toMutableList();list.removeAt(index);list.add(index-1,value);preset=preset.copy(blocks=list)
+                                }) {Text("上移")}
+                            }
+                        }
+                        item {OutlinedButton(onClick={block=PromptBlock()},enabled=preset.blocks.size<1000) {Text("添加提示块")}}
+                    }
                 }
                 else -> {
-                    Text("显示替换与发送替换可分别开关。原始聊天记录不会被改写。",style=MaterialTheme.typography.bodySmall)
-                    regex.rules.forEach { value -> ItemControls(value.name,value.enabled,{rule=value},
-                        {regex=regex.copy(rules=regex.rules.map {if(it.id==value.id) it.copy(enabled=!it.enabled) else it})},
-                        {regex=regex.copy(rules=regex.rules.filter {it.id!=value.id})}) }
-                    OutlinedButton(onClick={rule=TextRule()},enabled=regex.rules.size<32) {Text("添加规则")}
+                    item {Text("原始聊天不会被改写。可保存 256 条；按绑定顺序执行前 32 条启用规则。",style=MaterialTheme.typography.bodySmall)}
+                    items(regex.rules.filter {matches(it.name,it.pattern+it.replacement,it.enabled)},key={it.id}) {value ->
+                        ItemControls(value.name,value.enabled,{rule=value},
+                            {regex=regex.copy(rules=regex.rules.map {if(it.id==value.id) it.copy(enabled=!it.enabled) else it})},
+                            {regex=regex.copy(rules=regex.rules.filter {it.id!=value.id})})
+                    }
+                    item {OutlinedButton(onClick={rule=TextRule()},enabled=regex.rules.size<256) {Text("添加规则")}}
                 }
             }
-            error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
+            error?.let {item {Text(it,color=MaterialTheme.colorScheme.error)}}
         }
     },confirmButton={TextButton(onClick={
         val value=asset.copy(name=name,payload=when(asset.kind) {"lorebook"->appJson.encodeToString(lore);"preset"->appJson.encodeToString(preset);else->appJson.encodeToString(regex)})
         runCatching {value.validate()}.onSuccess {onSave(value)}.onFailure {error=it.message ?: "配置无效"}
     },enabled=name.isNotBlank()) {Text("保存")}},dismissButton={TextButton(onClick=onDismiss) {Text("取消")}})
-    entry?.let { value -> LoreEntryEditor(value,{entry=null}) { changed ->
+    entry?.let {value -> LoreEntryEditor(value,{entry=null}) {changed ->
         lore=lore.copy(entries=if(lore.entries.any {it.id==changed.id}) lore.entries.map {if(it.id==changed.id) changed else it} else lore.entries+changed);entry=null
-    } }
-    block?.let { value -> BlockEditor(value,{block=null}) { changed ->
+    }}
+    block?.let {value -> BlockEditor(value,{block=null}) {changed ->
         preset=preset.copy(blocks=if(preset.blocks.any {it.id==changed.id}) preset.blocks.map {if(it.id==changed.id) changed else it} else preset.blocks+changed);block=null
-    } }
-    rule?.let { value -> RuleEditor(value,{rule=null}) { changed ->
-        regex=regex.copy(rules=if(regex.rules.any {it.id==changed.id}) regex.rules.map {if(it.id==changed.id) changed else it} else regex.rules+changed);rule=null
-    } }
+    }}
+    rule?.let {value -> RuleEditor(value,{rule=null}) {changed ->
+        if(asset.kind=="preset") preset=preset.copy(regexRules=preset.regexRules.map {if(it.id==changed.id) changed else it})
+        else regex=regex.copy(rules=if(regex.rules.any {it.id==changed.id}) regex.rules.map {if(it.id==changed.id) changed else it} else regex.rules+changed)
+        rule=null
+    }}
 }
 
 @Composable
@@ -240,13 +279,19 @@ private fun LoreEntryEditor(initial: LoreEntry,onDismiss: ()->Unit,onSave: (Lore
             TextButton(onClick={advanced=!advanced}) {Text("匹配与插入选项")}
             if(advanced) {
                 Check("区分大小写",value.caseSensitive) {value=value.copy(caseSensitive=it)}
+                Check("整词匹配（中文通常关闭）",value.matchWholeWords) {value=value.copy(matchWholeWords=it)}
+                NumberField("触发概率（0 到 100）",value.probability) {value=value.copy(probability=it)}
+                Check("扫描玩家身份",value.matchPersona) {value=value.copy(matchPersona=it)}
+                Check("扫描角色描述",value.matchDescription) {value=value.copy(matchDescription=it)}
+                Check("扫描角色性格",value.matchPersonality) {value=value.copy(matchPersonality=it)}
+                Check("扫描场景",value.matchScenario) {value=value.copy(matchScenario=it)}
                 Check("使用辅助关键词",value.selective) {value=value.copy(selective=it)}
                 if(value.selective) {
                     Field("辅助关键词",secondary,{secondary=it})
                     Options("辅助关键词条件",listOf("and_any" to "命中任意一个","and_all" to "全部命中","not_any" to "全部未命中","not_all" to "至少一个未命中"),value.logic) {value=value.copy(logic=it)}
                 }
                 NumberField("插入顺序（较大值靠后）",value.order) {value=value.copy(order=it)}
-                Options("插入位置",positions,value.position) {value=value.copy(position=it)}
+                Options("插入位置",lorePositions,value.position) {value=value.copy(position=it)}
                 if(value.position=="depth") {NumberField("深度",value.depth) {value=value.copy(depth=it)};Options("消息角色",roles,value.role) {value=value.copy(role=it)}}
                 Check("不参与后续递归触发",value.preventRecursion) {value=value.copy(preventRecursion=it)}
                 Check("不通过递归激活本条",value.excludeRecursion) {value=value.copy(excludeRecursion=it)}
@@ -260,11 +305,17 @@ private fun BlockEditor(initial: PromptBlock,onDismiss: ()->Unit,onSave: (Prompt
     var value by remember {mutableStateOf(initial)}
     AlertDialog(onDismissRequest=onDismiss,title={Text("提示块")},text={Column(Modifier.heightIn(max=500.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
         Field("名称",value.name,{value=value.copy(name=it)},true)
-        Field("提示内容",value.content,{value=value.copy(content=it)})
+        if(value.marker.isBlank()) Field("提示内容",value.content,{value=value.copy(content=it)})
+        else Text("占位块：${value.marker}，生成时自动填入实际资料。",style=MaterialTheme.typography.bodySmall)
         Options("插入位置",positions,value.position) {value=value.copy(position=it)}
         if(value.position=="depth") NumberField("距最新消息的深度",value.depth) {value=value.copy(depth=it)}
         Options("消息角色",roles,value.role) {value=value.copy(role=it)}
-        Text("可使用 {{char}}、{{user}}、{{description}}、{{personality}}、{{scenario}}、{{persona}}。",style=MaterialTheme.typography.bodySmall)
+        if(value.position=="depth") NumberField("同深度插入顺序",value.order) {value=value.copy(order=it)}
+        Text("触发方式（不勾选则每种方式都使用）",style=MaterialTheme.typography.labelLarge)
+        listOf("normal" to "普通发送","continue" to "续写","regenerate" to "重生成","swipe" to "备选回复（重生成时使用）").forEach { (id,label) ->
+            Check(label,id in value.triggers) {checked -> value=value.copy(triggers=if(checked) value.triggers+id else value.triggers-id)}
+        }
+        Text("可使用基础宏和 {{setvar::变量::文字}} / {{getvar::变量}}；详见设置 → 帮助。",style=MaterialTheme.typography.bodySmall)
     }},confirmButton={TextButton(onClick={onSave(value.copy(depth=value.depth.coerceIn(0,100)))}) {Text("完成")}},dismissButton={TextButton(onClick=onDismiss) {Text("取消")}})
 }
 

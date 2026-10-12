@@ -12,8 +12,8 @@ android {
         applicationId = "com.moyer.roleplay.next"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.3.2-alpha"
+        versionCode = 6
+        versionName = "0.4.0-alpha"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
@@ -62,4 +62,20 @@ dependencies {
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.12.01"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+// A small JVM runtime lets private local fixtures be checked without uploading their contents.
+tasks.register("exportCommunityProbeRuntime") {
+    dependsOn("testDebugUnitTest")
+    doLast {
+        val target = layout.buildDirectory.dir("community-probe").get().asFile
+        target.deleteRecursively()
+        val tests = tasks.named<org.gradle.api.tasks.testing.Test>("testDebugUnitTest").get()
+        tests.classpath.files.filter { it.isDirectory || it.name.contains("kotlin-stdlib") ||
+            it.name.contains("kotlinx-serialization") || it.name.contains("re2j") ||
+            it.name.contains("jsoup") || it.name.contains("annotations") }.forEachIndexed { index, source ->
+            if(source.isDirectory) source.copyRecursively(target.resolve("classes-$index"),overwrite=true)
+            else source.copyTo(target.resolve("$index-${source.name}"),overwrite=true)
+        }
+    }
 }

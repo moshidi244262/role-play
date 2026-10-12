@@ -27,7 +27,7 @@ jobs:
         with:
           gradle-version: '8.9'
       - name: Unit tests, APK and lint
-        run: gradle testDebugUnitTest assembleDebug lintDebug --stacktrace
+        run: gradle testDebugUnitTest assembleDebug lintDebug exportCommunityProbeRuntime --stacktrace
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -35,6 +35,10 @@ jobs:
           path: |
             app/build/reports/
             app/schemas/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: community-probe-runtime
+          path: app/build/community-probe/
       - uses: actions/upload-artifact@v4
         with:
           name: roleplay-test-apk
