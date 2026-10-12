@@ -83,7 +83,7 @@ class UiSmokeTest {
 
     @Test fun tokenSettingPersistsForFreshViewModelAndActivity() {
         compose.runOnUiThread { vm.setShowTokenUsage(true) }
-        compose.onNodeWithText("设置").performClick()
+        compose.onNode(hasText("设置") and hasClickAction()).performClick()
         compose.onNodeWithTag("show-token-usage").performScrollTo().assertIsOn().performClick()
         compose.onNodeWithTag("show-token-usage").assertIsOff()
         val store = androidx.lifecycle.ViewModelStore()
@@ -93,8 +93,8 @@ class UiSmokeTest {
                 org.junit.Assert.assertFalse(fresh.showTokenUsage.value)
             }
             compose.activityRule.scenario.recreate()
-            compose.waitUntil(10000) { compose.onAllNodesWithText("设置").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("设置").performClick()
+            compose.waitUntil(10000) { compose.onAllNodes(hasText("设置") and hasClickAction()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(hasText("设置") and hasClickAction()).performClick()
             compose.onNodeWithTag("show-token-usage").performScrollTo().assertIsOff()
             screenshot("06-token-setting")
         } finally {
