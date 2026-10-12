@@ -28,12 +28,14 @@ class ReadingUiTest {
                 emptyList(),emptyList(),"",true,{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {_,_,_->}, {},
                 emptyMap(),emptyList(),null,false,{}, {})
         } }
+        compose.waitUntil(5000) {compose.onAllNodesWithText("第 120 行",substring=true).fetchSemanticsNodes().isNotEmpty()}
         compose.waitForIdle()
         val list=compose.onNodeWithTag("chat-messages")
         list.performTouchInput { swipeDown(startY=height*0.2f,endY=height*0.85f,durationMillis=400) }
         compose.onNodeWithTag("back-to-latest").assertIsDisplayed()
         val before=list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
         compose.runOnIdle {content.value += "\n"+(121..160).joinToString("\n") {"第 $it 行：继续收到新的内容。"}}
+        compose.waitUntil(5000) {compose.onAllNodesWithText("第 160 行",substring=true).fetchSemanticsNodes().isNotEmpty()}
         compose.waitForIdle()
         val after=list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
         assertEquals(before,after,0.001f)
