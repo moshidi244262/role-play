@@ -2,6 +2,7 @@ package com.moyer.roleplay.data
 
 import androidx.room.*
 import com.moyer.roleplay.core.appJson
+import com.moyer.roleplay.core.StorySummary
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
@@ -22,7 +23,8 @@ data class RoleplayConfig(
     val regexIds: List<String> = emptyList(), val characterPromptId: String? = null, val playerName: String = "",
     val persona: String = "", val memory: String = "", val authorNote: String = "", val authorDepth: Int = 2,
     val scanDepth: Int = 4, val loreBudget: Int = 2048, val historyBudgetChars: Int = 48000,
-    val narrativeView: String = "auto", val modelOverride: String = ""
+    val narrativeView: String = "auto", val modelOverride: String = "",
+    val storySummary: StorySummary? = null, val autoSummary: Boolean = false, val compactSummaryHistory: Boolean = false
 ) {
     fun references() = (lorebookIds + regexIds + listOfNotNull(presetId, characterPromptId)).toSet()
     fun remap(ids: Map<String, String>) = copy(lorebookIds = lorebookIds.mapNotNull { ids[it] },
@@ -30,6 +32,7 @@ data class RoleplayConfig(
     fun without(id: String) = copy(lorebookIds = lorebookIds.filter { it != id },
         presetId = presetId?.takeUnless { it == id }, characterPromptId = characterPromptId?.takeUnless { it == id }, regexIds = regexIds.filter { it != id })
     fun validate() {
+        storySummary?.validate()
         require(narrativeView in setOf("auto", "first", "third") && modelOverride.length <= 200) { "叙述视角或模型 ID 无效" }
         require(lorebookIds.size <= 64 && regexIds.size <= 32 && playerName.length <= 100) { "绑定资料或玩家名称超出限制" }
         require(scanDepth in 0..100 && loreBudget in 0..16384 && authorDepth in 0..100 &&
@@ -132,5 +135,6 @@ fun configDefaults(defaults: RoleplayConfig, card: RoleplayConfig): RoleplayConf
     narrativeView = if(card.narrativeView == "auto") defaults.narrativeView else card.narrativeView,
     memory=card.memory.ifBlank {defaults.memory},authorNote=card.authorNote.ifBlank { defaults.authorNote },authorDepth=if(card.authorDepth==2) defaults.authorDepth else card.authorDepth,
     scanDepth=if(card.scanDepth==4) defaults.scanDepth else card.scanDepth,loreBudget=if(card.loreBudget==2048) defaults.loreBudget else card.loreBudget,
-    historyBudgetChars=if(card.historyBudgetChars==48000) defaults.historyBudgetChars else card.historyBudgetChars
+    historyBudgetChars=if(card.historyBudgetChars==48000) defaults.historyBudgetChars else card.historyBudgetChars,
+    storySummary=null, autoSummary=card.autoSummary || defaults.autoSummary, compactSummaryHistory=card.compactSummaryHistory || defaults.compactSummaryHistory
 )

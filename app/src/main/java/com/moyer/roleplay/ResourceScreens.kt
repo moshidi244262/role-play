@@ -7,6 +7,11 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.testTag
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
@@ -25,55 +30,61 @@ fun ResourceScreen(assets: List<ResourceAsset>, busy: Boolean, onImport: ()->Uni
     onEdit: (ResourceAsset)->Unit, onToggle: (ResourceAsset)->Unit, onDelete: (ResourceAsset)->Unit,
     onExport: (ResourceAsset)->Unit, onBackup: ()->Unit, onDefaults: ()->Unit, onImportKind: ((String)->Unit)? = null) {
     var kind by remember { mutableStateOf("lorebook") }
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal=20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-        item {
-            Column(Modifier.padding(top=28.dp,bottom=8.dp)) {
-                Text("资料库",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold)
-                Text("按需要绑定到角色或会话",color=MaterialTheme.colorScheme.onSurfaceVariant)
-                Row { TextButton(onClick=onImport,enabled=!busy) { Text("导入 JSON / PNG") }
-                    TextButton(onClick={onNew(kind)}) { Text("新建${resourceLabel(kind)}") } }
-                if(kind in setOf("preset","lorebook") && onImportKind != null) {
-                    OutlinedButton(onClick={onImportKind(kind)},enabled=!busy,modifier=Modifier.fillMaxWidth()) {
-                        Text("导入${resourceLabel(kind)}文件")
-                    }
-                }
-                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                    listOf("lorebook","preset","regex").forEach { value ->
-                        FilterChip(selected=kind==value,onClick={kind=value},label={Text(resourceLabel(value))})
-                    }
-                }
-            }
-        }
-        items(assets.filter { it.kind==kind },key={it.id}) { asset ->
-            OutlinedCard(Modifier.fillMaxWidth()) {
+    Box(Modifier.fillMaxSize(),contentAlignment=Alignment.TopCenter) {
+    LazyColumn(Modifier.widthIn(max=840.dp).fillMaxSize().padding(horizontal=20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        item { PageHeading("资料库","为故事添一些细节") {
+            FilledTonalIconButton(onClick={onNew(kind)},enabled=!busy) {Icon(Icons.Outlined.Add,"新建${resourceLabel(kind)}")}
+        } }
+        item { Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            listOf("lorebook","preset","regex").forEach {value -> FilterChip(selected=kind==value,onClick={kind=value},label={Text(resourceLabel(value))})}
+        } }
+        item { Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            if(kind in setOf("preset","lorebook") && onImportKind!=null) OutlinedButton(onClick={onImportKind(kind)},enabled=!busy) {Text("导入${resourceLabel(kind)}文件")}
+            TextButton(onClick=onImport,enabled=!busy) {Text("通用导入")}
+        } }
+        items(assets.filter {it.kind==kind},key={it.id}) {asset ->
+            var menu by remember(asset.id) {mutableStateOf(false)}
+            Card(Modifier.fillMaxWidth(),colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surface)) {
                 Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment=Alignment.CenterVertically) {
-                        Text(asset.name,Modifier.weight(1f),fontWeight=FontWeight.SemiBold)
-                        Switch(checked=asset.enabled,onCheckedChange={onToggle(asset)})
+                        Column(Modifier.weight(1f)) {
+                            Text(asset.name,fontWeight=FontWeight.SemiBold,maxLines=2,overflow=TextOverflow.Ellipsis)
+                            val count=remember(asset.payload) {when(asset.kind) {
+                                "lorebook"->appJson.decodeFromString<LoreBook>(asset.payload).entries.size
+                                "preset"->appJson.decodeFromString<StylePreset>(asset.payload).blocks.size
+                                else->appJson.decodeFromString<RegexRules>(asset.payload).rules.size
+                            }}
+                            Text("$count 条 · ${if(asset.enabled) "启用" else "已停用"}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(checked=asset.enabled,onCheckedChange={onToggle(asset)},enabled=!busy)
+                        Box {
+                            IconButton(onClick={menu=true}) {Icon(Icons.Outlined.MoreVert,"资料操作：${asset.name}")}
+                            DropdownMenu(menu,{menu=false}) {
+                                DropdownMenuItem(text={Text("导出")},onClick={menu=false;onExport(asset)},enabled=!busy)
+                                DropdownMenuItem(text={Text("删除")},onClick={menu=false;onDelete(asset)},enabled=!busy)
+                            }
+                        }
                     }
-                    val count=remember(asset.payload) { when(asset.kind) {
-                        "lorebook"->appJson.decodeFromString<LoreBook>(asset.payload).entries.size
-                        "preset"->appJson.decodeFromString<StylePreset>(asset.payload).blocks.size
-                        else->appJson.decodeFromString<RegexRules>(asset.payload).rules.size
-                    } }
-                    Text("$count 条 · ${if(asset.enabled) "启用" else "已停用"}",style=MaterialTheme.typography.bodySmall)
-                    if(asset.notes.isNotBlank()) Text("有兼容提示，请在编辑中查看",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.tertiary)
-                    Row {
-                        TextButton(onClick={onEdit(asset)}) { Text("编辑") }
-                        TextButton(onClick={onExport(asset)}) { Text("导出") }
-                        TextButton(onClick={onDelete(asset)}) { Text("删除") }
+                    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                        if(asset.notes.isNotBlank()) Text("有兼容提示",Modifier.weight(1f),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.tertiary)
+                        else Spacer(Modifier.weight(1f))
+                        TextButton(onClick={onEdit(asset)},enabled=!busy) {Text("编辑")}
                     }
                 }
             }
         }
-        if(assets.none { it.kind==kind }) item { Text("还没有${resourceLabel(kind)}，可以新建或从文件导入。") }
+        if(assets.none {it.kind==kind}) item {Card(Modifier.fillMaxWidth()) {Column(Modifier.padding(24.dp)) {
+            Text("还没有${resourceLabel(kind)}",style=MaterialTheme.typography.titleMedium)
+            Text("可以新建或从文件导入。",color=MaterialTheme.colorScheme.onSurfaceVariant)
+        }}}
         item {
-            HorizontalDivider(Modifier.padding(top=12.dp))
-            TextButton(onClick=onDefaults) { Text("新会话默认资料与玩家身份") }
-            TextButton(onClick=onBackup,enabled=!busy) { Text("导出完整备份") }
+            SectionLabel("默认设定")
+            TextButton(onClick=onDefaults) {Text("新会话默认资料与玩家身份")}
+            TextButton(onClick=onBackup,enabled=!busy) {Text("导出完整备份")}
             Text("停用资料会暂停它在所有会话中的作用。原始导入字段会保留，兼容范围可在编辑页查看。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(20.dp))
         }
+    }
     }
 }
 

@@ -28,14 +28,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val api = ApiClient()
     private val mutations = Mutex()
     private var generation: Job? = null
+    private var summaryGeneration: Job? = null
+    val summaryBusy=MutableStateFlow(false)
+    val summaryCandidate=MutableStateFlow<SummaryCandidate?>(null)
     private val pendingDrafts = linkedMapOf<String, String>()
     private var draftWriter: Job? = null
+    val selectedId = MutableStateFlow<String?>(null)
     val characters = dao.characters().distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val connections = dao.connections().distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val sessions = dao.sessions().distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val sessionPreviews = selectedId.flatMapLatest { id ->
+        if(id!=null) flowOf(emptyMap<String,String>()) else dao.sessionPreviews().map {rows ->
+            withContext(Dispatchers.Default) {rows.associate {it.sessionId to MessageMarkup.preview(it.content)}}
+        }
+    }.stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),emptyMap())
     val resources = dao.resources().distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val defaults = dao.defaults().map { readConfig(it ?: "{}") }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), RoleplayConfig())
-    val selectedId = MutableStateFlow<String?>(null)
     val messages = selectedId.flatMapLatest { id -> if (id == null) flowOf(emptyList()) else dao.messages(id) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val sending = MutableStateFlow(false)
@@ -54,6 +62,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val connectionFeedback = MutableStateFlow<String?>(null)
     val darkMode = MutableStateFlow(preferences.getBoolean("dark", false))
     val showTokenUsage = MutableStateFlow(preferences.getBoolean("show_token_usage", true))
+    val readingAppearance=MutableStateFlow(ReadingAppearance(preferences.getInt("reading_font",16).coerceIn(14,22),preferences.getBoolean("quiet_reading",false)))
     val drafts = MutableStateFlow<Map<String, String>>(emptyMap())
 
     init {
@@ -80,6 +89,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun setShowTokenUsage(value: Boolean) {
         showTokenUsage.value = value
         preferences.edit().putBoolean("show_token_usage", value).apply()
+    }
+
+    fun setReadingAppearance(value: ReadingAppearance) {
+        val checked=value.copy(fontSize=value.fontSize.coerceIn(14,22))
+        readingAppearance.value=checked
+        preferences.edit().putInt("reading_font",checked.fontSize).putBoolean("quiet_reading",checked.quiet).apply()
     }
 
     fun newChat(card: CharacterCard, greeting: String? = null) = viewModelScope.launch {
@@ -143,7 +158,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectModel(sessionId: String, model: String) = viewModelScope.launch {
-        if (!sending.value) safe {
+        if (!sending.value && !summaryBusy.value) safe {
             require(model.isNotBlank() && model.length <= 200) { "模型 ID 无效" }
             val session = requireNotNull(dao.session(sessionId))
             dao.saveConfig(session.id, readConfig(session.config).copy(modelOverride = model).json(), session.playerName)
@@ -182,7 +197,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun bindConnection(id: String, connectionId: String) = viewModelScope.launch {
-        if (!sending.value) safe { mutations.withLock {
+        if (!sending.value && !summaryBusy.value) safe { mutations.withLock {
             val session = requireNotNull(dao.session(id))
             dao.bindConnection(id, connectionId)
             dao.saveConfig(id, readConfig(session.config).copy(modelOverride = "").json(), session.playerName)
@@ -191,7 +206,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun send(text: String?, continueStory: Boolean = false, answerExisting: Boolean = false) {
         val id = selectedId.value ?: return
-        if (sending.value || (!continueStory && !answerExisting && text.isNullOrBlank())) return
+        if (sending.value || summaryBusy.value || (!continueStory && !answerExisting && text.isNullOrBlank())) return
         sending.value = true
         generation = viewModelScope.launch {
             var reply: ChatMessage? = null
@@ -239,6 +254,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 require(accumulated.isNotBlank() || endStatus != "complete") { "模型没有返回文字，请检查模型能力或输出上限" }
                 dao.updateMessage(currentReply.id, accumulated.toString(), endStatus)
                 dao.touch(id, System.currentTimeMillis())
+                if(endStatus=="complete" && readConfig(requireNotNull(dao.session(id)).config).autoSummary) generateStorySummary(id,true)
             } catch (e: CancellationException) {
                 withContext(NonCancellable) { reply?.let { dao.updateMessage(it.id, accumulated.toString(), "interrupted") } }
                 throw e
@@ -249,11 +265,66 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun stop() { generation?.cancel() }
+    fun stop() { generation?.cancel(); summaryGeneration?.cancel() }
+
+    fun generateStorySummary(sessionId: String, automatic: Boolean = false) {
+        if(summaryBusy.value || (!automatic && sending.value)) return
+        summaryBusy.value=true
+        summaryCandidate.value=null
+        summaryGeneration=viewModelScope.launch {
+            try {
+                val session=requireNotNull(dao.session(sessionId)) {"会话不存在"}
+                val config=readConfig(session.config)
+                val plan=withContext(Dispatchers.Default) {StoryMemory.plan(dao.history(sessionId),config.storySummary,if(automatic) 20 else 1)}
+                if(plan==null) {
+                    if(!automatic) notice.value="暂时没有可整理的旧剧情。保留最近12条消息，需要至少13条完整消息；单条旧消息超过60000字符时请先手工整理。"
+                    return@launch
+                }
+                val profile=session.connectionId?.let {dao.connection(it)}?.let {sessionProfile(it,config)}
+                    ?: throw IllegalArgumentException("请先选择API连接与模型")
+                require(profile.model.isNotBlank()) {"请先选择模型"}
+                val key=withContext(Dispatchers.IO) {app.secrets.get(profile.id)} ?: throw IllegalArgumentException("请先填写该连接的API密钥")
+                val content=StringBuilder();var status="complete"
+                api.stream(profile.copy(maxOutputTokens=if(profile.maxOutputTokens==0) 4096 else profile.maxOutputTokens.coerceAtMost(4096)),key,plan.prompt()).collect {event ->
+                    if(event is ApiEvent.Text) {content.append(event.value);require(content.length<=16000) {"摘要过长，请手工整理"}}
+                    if(event is ApiEvent.End) status=event.status
+                }
+                require(status=="complete" && content.isNotBlank()) {"摘要未完整生成，原有记忆保留，请重试或手工整理"}
+                val summary=plan.summary(content.toString()).also {it.validate()}
+                mutations.withLock {
+                    val latest=requireNotNull(dao.session(sessionId))
+                    val latestConfig=readConfig(latest.config)
+                    require(latestConfig.storySummary==config.storySummary && StoryMemory.valid(summary,dao.history(sessionId))!=null) {"剧情已变化，请重新整理摘要"}
+                    if(automatic && latestConfig.autoSummary) {
+                        dao.saveConfig(sessionId,latestConfig.copy(storySummary=summary).json(),latest.playerName)
+                        notice.value="已更新剧情摘要；可在剧情记忆中查看与修订"
+                    } else if(!automatic) summaryCandidate.value=SummaryCandidate(sessionId,summary,config.storySummary)
+                }
+            } catch(e: CancellationException) {throw e}
+            catch(e: Exception) {notice.value="剧情摘要：${safeError(e)}；原有记忆保留"}
+            finally {summaryBusy.value=false;summaryGeneration=null}
+        }
+    }
+
+    fun saveStoryMemory(id: String, fixed: String, summary: StorySummary?, automatic: Boolean, compact: Boolean,
+        expected: StorySummary?, onSaved: ()->Unit) = viewModelScope.launch {
+        if(sending.value || summaryBusy.value) return@launch
+        safe {mutations.withLock {
+            val session=requireNotNull(dao.session(id))
+            val config=readConfig(session.config)
+            require(config.storySummary==expected) {"摘要已更新，请关闭后重新打开剧情记忆"}
+            require(summary==null || StoryMemory.valid(summary,dao.history(id))!=null) {"摘要来源已变化，请重新生成"}
+            val value=config.copy(memory=fixed,storySummary=summary,autoSummary=automatic,compactSummaryHistory=compact)
+            value.validate();dao.saveConfig(id,value.json(),session.playerName)
+            summaryCandidate.value=null
+            notice.value="剧情记忆已保存";onSaved()
+        }}
+    }
+
 
     fun forkMessage(messageId: String,edited: String?=null,regenerate: Boolean=false) = viewModelScope.launch {
         val id=selectedId.value ?: return@launch
-        if(sending.value) {notice.value="请先停止生成";return@launch}
+        if(sending.value || summaryBusy.value) {notice.value="请先停止生成";return@launch}
         safe {
             if(edited!=null) require(edited.isNotBlank()) {"消息不能为空"}
             val fork=mutations.withLock {repository.forkSession(id,messageId,edited,regenerate)}
@@ -263,7 +334,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteChat(id: String) = viewModelScope.launch {
-        if (sending.value) { notice.value = "请先停止生成再删除会话"; return@launch }
+        if (sending.value || summaryBusy.value) { notice.value = "请先停止生成再删除会话"; return@launch }
         safe {
             mutations.withLock {
                 dao.deleteSession(id)
@@ -412,12 +483,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         safe { mutations.withLock { repository.deleteAsset(id) }; notice.value="资料已删除，关联已解除" }
     }
     fun saveConfig(sessionId: String?, config: RoleplayConfig, onSaved: ()->Unit) = viewModelScope.launch {
-        if(sending.value) { notice.value="请停止生成后修改会话设定"; return@launch }
+        if(sending.value || summaryBusy.value) { notice.value="请停止生成后修改会话设定"; return@launch }
         safe {
             config.validate()
             mutations.withLock {
                 if(sessionId==null) dao.saveSetting(StoredSetting("defaults",config.json()))
-                else dao.saveConfig(sessionId,config.json(),config.playerName.ifBlank { "我" })
+                else {
+                    val current=requireNotNull(dao.session(sessionId))
+                    val live=readConfig(current.config)
+                    require(live.storySummary==config.storySummary) {"剧情记忆已更新，请重新打开会话设定"}
+                    dao.saveConfig(sessionId,config.json(),config.playerName.ifBlank { "我" })
+                }
             }
             onSaved(); notice.value=if(sessionId==null) "新会话默认资料已保存" else "会话设定已保存"
         }
