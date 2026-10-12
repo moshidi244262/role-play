@@ -1,0 +1,87 @@
+name: Android build and persistence checks
+on:
+  push:
+    branches: [main, stage-1-android]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Unit tests, APK and lint
+        run: gradle testDebugUnitTest assembleDebug lintDebug exportCommunityProbeRuntime --stacktrace
+      - name: Retain APK verification tools
+        run: |
+          mkdir -p app/build/delivery-tools
+          cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" app/build/delivery-tools/
+          cp "$ANDROID_HOME/build-tools/35.0.0/zipalign" app/build/delivery-tools/
+          cp -r "$ANDROID_HOME/build-tools/35.0.0/lib64" app/build/delivery-tools/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-delivery-tools
+          path: app/build/delivery-tools/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-test-reports
+          path: |
+            app/build/reports/
+            app/schemas/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: community-probe-runtime
+          path: app/build/community-probe/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: roleplay-test-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+  persistence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: bash .github/scripts/device-check.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: persistence-device-reports
+          path: |
+            app/build/reports/androidTests/
+            app/build/ui-screenshots/
+            app/build/device-logcat.txt
