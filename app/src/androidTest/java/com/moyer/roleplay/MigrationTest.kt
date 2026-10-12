@@ -36,7 +36,7 @@ class MigrationTest {
                 arrayOf("v2-message", "v2-chat", "assistant", "原回复", 0, "complete", 1, 23, 45))
             db.version = 2
         }
-        val database = Room.databaseBuilder(context, AppDatabase::class.java, name).addMigrations(AppDatabase.MIGRATION_2_3).build()
+        val database = Room.databaseBuilder(context, AppDatabase::class.java, name).addMigrations(AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4).build()
         try {
             val card = database.dao().allCharacters().single()
             assertEquals("original-image", card.avatar); assertEquals("", card.customAvatar)
@@ -65,7 +65,7 @@ class MigrationTest {
             db.execSQL("INSERT INTO messages VALUES (?,?,?,?,?,?,?)",arrayOf("old-message","old-chat","assistant","升级前的回复",0,"complete",1))
             db.version=1
         }
-        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3).build()
+        val database=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4).build()
         try {
             val repository=ChatRepository(database);repository.initialize()
             val session=database.dao().session("old-chat")!!

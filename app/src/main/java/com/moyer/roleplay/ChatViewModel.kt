@@ -56,7 +56,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 repository.initialize()
-                preferences.getString("last_session", null)?.let { if (dao.session(it) != null) selectedId.value = it }
+                // Cold launches always start at the session list. Activity recreation keeps this ViewModel.
+                preferences.edit().remove("last_session").apply()
             } catch (_: Exception) { notice.value = "本地数据库打开失败，请保留应用数据并反馈问题" }
             finally { ready.value = true }
         }
@@ -65,7 +66,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun clearNotice() { notice.value = null }
     fun openChat(id: String) {
         selectedId.value = id
-        preferences.edit().putString("last_session", id).apply()
     }
     fun backToList() { selectedId.value = null }
     fun setDark(value: Boolean) {

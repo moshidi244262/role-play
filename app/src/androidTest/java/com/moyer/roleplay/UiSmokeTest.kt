@@ -35,6 +35,31 @@ class UiSmokeTest {
         if(compose.onAllNodesWithContentDescription("返回").fetchSemanticsNodes().isNotEmpty()) compose.onNodeWithContentDescription("返回").performClick()
     }
 
+    @Test fun freshLaunchStartsAtSessionsWhileRotationKeepsCurrentConversation() {
+        val session=vm.sessions.value.firstOrNull()
+        if(session==null) {
+            compose.onNode(hasText("角色") and hasClickAction()).performClick()
+            compose.onNodeWithTag("characters").performScrollToNode(hasContentDescription("开始与林舟的新会话"))
+            compose.onNodeWithContentDescription("开始与林舟的新会话").performClick()
+            compose.waitUntil(10000) {vm.selectedId.value!=null}
+        } else compose.runOnUiThread {vm.openChat(session.id)}
+        val selected=vm.selectedId.value
+        compose.activityRule.scenario.recreate()
+        compose.runOnUiThread {vm=ViewModelProvider(compose.activity)[ChatViewModel::class.java]}
+        assertEquals(selected,vm.selectedId.value)
+        val store=androidx.lifecycle.ViewModelStore()
+        lateinit var fresh: ChatViewModel
+        compose.runOnUiThread {
+            compose.activity.application.getSharedPreferences("ui",android.content.Context.MODE_PRIVATE).edit().putString("last_session",selected).commit()
+            fresh=ViewModelProvider(store,ViewModelProvider.AndroidViewModelFactory.getInstance(compose.activity.application))[ChatViewModel::class.java]
+        }
+        compose.waitUntil(10000) {fresh.ready.value}
+        org.junit.Assert.assertNull(fresh.selectedId.value)
+        compose.runOnUiThread {store.clear()}
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNode(hasText("会话") and hasClickAction()).assertExists()
+    }
+
     @Test fun settingsHelpSearchAndTypedFileImportRemainAvailableAfterRecreation() {
         compose.onNode(hasText("设置") and hasClickAction()).performClick()
         compose.onNodeWithTag("settings-help").performScrollTo().performClick()
