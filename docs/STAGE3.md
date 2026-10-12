@@ -29,6 +29,17 @@
 
 ## 验证
 
-本轮包含截图结构的 HTML 样例、流式长回复向上阅读、折叠面板、角色搜索、模型搜索和分页、身份与模型覆盖、旧数据库迁移与备份恢复的回归检查。最终结果将在构建和安卓设备检查结束后补全。
+本轮包含截图结构的 HTML 样例、流式长回复向上阅读、折叠面板、角色搜索、模型搜索和分页、身份与模型覆盖、旧数据库迁移与备份恢复的回归检查。
+
+### 最终验证（2026-10-12 UTC）
+
+- 应用代码：`fbfeb8a74953f3ac04586b5ff42b136052d5466f`。
+- [PR 工作流](https://github.com/moshidi244262/role-play/actions/runs/38188821579) 与 [分支工作流](https://github.com/moshidi244262/role-play/actions/runs/38188818770) 的构建、设备任务均通过。
+- 41 项 JVM 单元测试、10 项 Android 10 模拟器测试通过，Lint 无错误。设备检查包括一条 120→160 行流式长回复的阅读位置保持与恢复跟随、状态面板展开、模型搜索、PNG 角色导入与搜索、连接提示可见性及弹窗保存、草稿恢复、旧数据库迁移与资料备份。
+- 连接操作使用弹窗自身的焦点和键盘控制，结果自动滚入可见区域。自动聊天滚动使用下一次列表测量请求，避免布局重入。
+- DeepSeek 实时返回 `deepseek-flash`、`deepseek-v4-pro`。应用 Kotlin 请求代码完成 Flash 流式角色/世界书测试（289 tokens）；Pro 最小流式请求成功（115 tokens）。本轮生成合计 404 tokens。OpenAI、Claude、Grok 没有真实账户验收，采用协议和分页模拟检查。
+- APK：`RolePlay-0.3.0-alpha.apk`，18,359,229 字节，版本代码 3，最低 Android 8.0。已验证 V2 签名；与旧 0.2.0 签名不同，按上方并行安装和备份迁移步骤使用。
+- APK SHA-256：`faed6b10b8c569e675d02b16d07d879631f7b8bab926d003b3bf474fd73f2cdf`。
+- 新升级签名证书 SHA-256：`78e80b7a07988793fe854e6ad23108dc4433f5b8846a9f11c6273b8bad4910fa`。对应私有签名文件已单独保留，未加入公开仓库。
 
 接口依据：[DeepSeek 模型](https://api-docs.deepseek.com/quick_start/pricing/)、[Claude 模型列表与分页](https://platform.claude.com/docs/en/api/models/list)、[jsoup HTML 片段解析](https://jsoup.org/cookbook/input/parse-body-fragment)。
