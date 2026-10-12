@@ -20,8 +20,9 @@ import kotlinx.coroutines.withContext
 
 @Composable
 internal fun MessageContent(text: String, messageId: String) {
-    val blocks by produceState(initialValue = emptyList<MessageBlock>(), key1 = text) {
-        value = withContext(Dispatchers.Default) { MessageMarkup.parse(text) }
+    var blocks by remember(messageId) { mutableStateOf(emptyList<MessageBlock>()) }
+    LaunchedEffect(text, messageId) {
+        blocks = withContext(Dispatchers.Default) { MessageMarkup.parse(text) }
     }
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         MessageBlocks(blocks, messageId)
