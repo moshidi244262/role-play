@@ -14,6 +14,8 @@ internal fun ModelPicker(selected: String, models: List<String>, busy: Boolean, 
     onRefresh: ()->Unit, onSelect: (String)->Unit, onDismiss: ()->Unit) {
     var query by remember { mutableStateOf("") }
     var manual by remember { mutableStateOf(selected) }
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val distinct = remember(models) { models.filter(String::isNotBlank).distinct().sorted() }
     val visible = remember(distinct,query) { distinct.filter { it.contains(query.trim(),ignoreCase=true) } }
     AlertDialog(onDismissRequest=onDismiss,title={Text("选择模型")},text={
@@ -27,7 +29,7 @@ internal fun ModelPicker(selected: String, models: List<String>, busy: Boolean, 
                 } }
                 if(visible.isEmpty()) item {Text(if(distinct.isEmpty()) "点击获取模型列表。" else "没有匹配的模型。")}
             }
-            TextButton(onClick=onRefresh,enabled=!busy) {Text(if(busy) "正在连接…" else "获取模型列表")}
+            TextButton(onClick={focusManager.clearFocus();keyboard?.hide();onRefresh()},enabled=!busy) {Text(if(busy) "正在连接…" else "获取模型列表")}
             OutlinedTextField(manual,{manual=it},label={Text("手动模型 ID（可选）")},singleLine=true,modifier=Modifier.fillMaxWidth())
         }
     },confirmButton={TextButton(onClick={onSelect(manual.trim())},enabled=!busy && manual.isNotBlank()) {Text("使用此模型")}},

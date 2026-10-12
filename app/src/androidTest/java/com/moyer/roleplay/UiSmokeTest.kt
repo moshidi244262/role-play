@@ -63,6 +63,7 @@ class UiSmokeTest {
         compose.onNodeWithText("保存").assertIsEnabled()
         compose.onNodeWithText("获取模型列表").performScrollTo().performClick()
         compose.waitUntil(10000) {compose.onAllNodesWithText("请为该服务地址填写 API 密钥").fetchSemanticsNodes().isNotEmpty()}
+        compose.waitUntil(5000) {compose.onNodeWithText("请为该服务地址填写 API 密钥").isDisplayed()}
         compose.onNodeWithText("请为该服务地址填写 API 密钥").assertIsDisplayed()
         screenshot("03-connection-feedback")
         compose.onNodeWithText("保存").performClick()

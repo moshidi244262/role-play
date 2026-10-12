@@ -402,11 +402,16 @@ internal fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, conne
     val characterName=remember(session.characterSnapshot) {appJson.decodeFromString<CharacterCard>(session.characterSnapshot).name}
     val rules=remember(config,resources) {PromptBuilder.rules(config,resources)}
     LaunchedEffect(session.id, messages.size, messages.lastOrNull()?.content, followLatest) {
+        // Layout snapshots may resume this effect while the lazy list is still being measured.
+        withFrameNanos { }; kotlinx.coroutines.yield()
         if (messages.isNotEmpty() && followLatest && !scroll.isScrollInProgress) scroll.scrollToItem(messages.size)
     }
     LaunchedEffect(session.id) {
         snapshotFlow { followLatest && !scroll.isScrollInProgress && scroll.canScrollForward }
-            .distinctUntilChanged().collect { shouldFollow -> if (shouldFollow) scroll.scrollToItem(currentCount) }
+            .distinctUntilChanged().collect { shouldFollow -> if (shouldFollow) {
+                withFrameNanos { }; kotlinx.coroutines.yield()
+                if (followLatest && !scroll.isScrollInProgress && scroll.canScrollForward) scroll.scrollToItem(currentCount)
+            } }
     }
     Column(Modifier.fillMaxSize().imePadding()) {
         TopAppBar(title = {
@@ -549,6 +554,9 @@ private fun EditorField(label: String, value: String, onChange: (String) -> Unit
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDismiss: () -> Unit) {
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    fun finishTyping() { focusManager.clearFocus(); keyboard?.hide() }
     var provider by remember(initial.id) { mutableStateOf(initial.provider) }
     var name by remember(initial.id) { mutableStateOf(initial.name) }
     var url by remember(initial.id) { mutableStateOf(initial.baseUrl) }
@@ -585,9 +593,9 @@ private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDi
                 supportingText = { Text("编辑已有连接时，留空保留原密钥。密钥不会写入备份。") })
             EditorField("服务地址（Base URL）", url, { url = it; vm.modelChoices.value = emptyList(); vm.connectionFeedback.value = null }, true)
             EditorField("模型 ID", model, { model = it }, true)
-            TextButton(enabled = !busy, onClick = { vm.fetchModels(profile(), key) }) { Text(if (busy) "正在连接…" else "获取模型列表") }
+            TextButton(enabled = !busy, onClick = { finishTyping(); vm.fetchModels(profile(), key) }) { Text(if (busy) "正在连接…" else "获取模型列表") }
             Text("模型列表不可用时也能先保存连接，再手动填写模型 ID。", style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(onClick={modelPicker=true},enabled=!busy,modifier=Modifier.fillMaxWidth()) {Text("选择模型（${choices.size} 个已获取）")}
+            OutlinedButton(onClick={finishTyping();modelPicker=true},enabled=!busy,modifier=Modifier.fillMaxWidth()) {Text("选择模型（${choices.size} 个已获取）")}
             if(provider=="DeepSeek") {
                 Text("官方常用模型（仍需账户权限）",style=MaterialTheme.typography.labelSmall)
                 FlowRow { listOf("deepseek-flash", "deepseek-v4-pro").forEach { id ->
@@ -606,7 +614,7 @@ private fun ConnectionEditor(initial: ConnectionProfile, vm: ChatViewModel, onDi
                 EditorField("最大输出 token 数", output, { output = it.filter(Char::isDigit) }, true)
                 if (protocol == Protocol.ANTHROPIC_MESSAGES) EditorField("API 版本头", version, { version = it }, true)
             }
-            OutlinedButton(onClick = { costConfirmation = true }, enabled = !busy && model.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { finishTyping(); costConfirmation = true }, enabled = !busy && model.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
                 Text("测试生成连接")
             }
             }
