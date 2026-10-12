@@ -12,11 +12,11 @@ android {
         applicationId = "com.moyer.roleplay.next"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.3.1-alpha"
+        versionCode = 5
+        versionName = "0.3.2-alpha"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas")
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

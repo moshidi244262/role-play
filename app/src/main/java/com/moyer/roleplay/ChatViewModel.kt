@@ -28,10 +28,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val api = ApiClient()
     private val mutations = Mutex()
     private var generation: Job? = null
-    val characters = dao.characters().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-    val connections = dao.connections().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-    val sessions = dao.sessions().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-    val resources = dao.resources().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    private val pendingDrafts = linkedMapOf<String, String>()
+    private var draftWriter: Job? = null
+    val characters = dao.characters().distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val connections = dao.connections().distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val sessions = dao.sessions().distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val resources = dao.resources().distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val defaults = dao.defaults().map { readConfig(it ?: "{}") }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), RoleplayConfig())
     val selectedId = MutableStateFlow<String?>(null)
     val messages = selectedId.flatMapLatest { id -> if (id == null) flowOf(emptyList()) else dao.messages(id) }
@@ -80,13 +82,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         safe { openChat(repository.createSession(card, connections.value.firstOrNull()?.id, greeting)) }
     }
 
-    fun saveCharacter(card: CharacterCard) = viewModelScope.launch {
+    fun saveCharacter(card: CharacterCard, onSaved: () -> Unit = {}) = viewModelScope.launch {
         safe {
-            require(card.name.isNotBlank()) { "请填写角色名称" }
-            require(card.name.length<=200) {"角色名称最多 200 字符"}
-            val greetings=appJson.decodeFromString<List<String>>(card.alternateGreetings)
-            require(greetings.size<=100 && greetings.all {it.length<=32000}) {"备选开场白超出限制"}
+            withContext(Dispatchers.Default) {
+                require(card.name.isNotBlank()) { "请填写角色名称" }
+                require(card.name.length<=200) {"角色名称最多 200 字符"}
+                readConfig(card.config)
+                val greetings=appJson.decodeFromString<List<String>>(card.alternateGreetings)
+                require(greetings.size<=100 && greetings.all {it.length<=32000}) {"备选开场白超出限制"}
+            }
             dao.saveCharacter(card.copy(name = card.name.trim(), updatedAt = System.currentTimeMillis()))
+            onSaved()
             notice.value = "角色已保存；头像同步到会话列表，已有剧情设定保留"
         }
     }
@@ -156,8 +162,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveDraft(id: String, draft: String) {
+        if (drafts.value[id] == draft) return
         drafts.value = drafts.value + (id to draft)
-        viewModelScope.launch { mutations.withLock { safe { dao.saveDraft(id, draft) } } }
+        pendingDrafts[id] = draft
+        if (draftWriter?.isActive == true) return
+        // Keep the newest value per session while a write is running, without a timed debounce.
+        draftWriter = viewModelScope.launch {
+            while (pendingDrafts.isNotEmpty()) mutations.withLock {
+                pendingDrafts.entries.firstOrNull()?.let { (sessionId, value) ->
+                    pendingDrafts.remove(sessionId)
+                    safe { dao.saveDraft(sessionId, value) }
+                }
+            }
+        }
     }
 
     fun bindConnection(id: String, connectionId: String) = viewModelScope.launch {
@@ -190,7 +207,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val preparedHistory = originalHistory + listOfNotNull(userText?.let { ChatMessage(sessionId=id,role="user",content=it,position=(originalHistory.maxOfOrNull { m -> m.position } ?: -1)+1) })
                 val assets=dao.allResources()
                 val report=withContext(Dispatchers.Default) { PromptBuilder.compile(session,preparedHistory,assets) }
-                val currentReply = mutations.withLock { repository.startTurn(id, userText) }
+                val currentReply = mutations.withLock {
+                    repository.startTurn(id, userText).also {
+                        if (userText != null) pendingDrafts.remove(id)
+                    }
+                }
                 reply = currentReply
                 if (userText != null) drafts.value = drafts.value + (id to "")
                 val prompt = report.messages.toMutableList()
@@ -237,7 +258,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteChat(id: String) = viewModelScope.launch {
         if (sending.value) { notice.value = "请先停止生成再删除会话"; return@launch }
         safe {
-            mutations.withLock { dao.deleteSession(id) }
+            mutations.withLock {
+                dao.deleteSession(id)
+                pendingDrafts.remove(id)
+                drafts.value = drafts.value - id
+            }
             if (preferences.getString("last_session", null) == id) preferences.edit().remove("last_session").apply()
             if (selectedId.value == id) selectedId.value = null
         }
@@ -246,25 +271,27 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun exportTo(uri: Uri, sessionId: String?, readable: Boolean) = viewModelScope.launch {
         if (operationBusy.value) return@launch
         operationBusy.value = true
-        safe {
-            val text = mutations.withLock {
-                if (readable) repository.readableExport(requireNotNull(sessionId))
-                else BackupCodec.encode(repository.export(sessionId))
+        try { safe {
+            val bytes = mutations.withLock {
+                if (readable) withContext(Dispatchers.Default) { repository.readableExport(requireNotNull(sessionId)).toByteArray(Charsets.UTF_8) }
+                else {
+                    val bundle = repository.export(sessionId)
+                    withContext(Dispatchers.Default) { BackupCodec.encode(bundle).toByteArray(Charsets.UTF_8) }
+                }
             }
-            require(text.toByteArray(Charsets.UTF_8).size <= BackupCodec.MAX_BYTES) { "记录超过 16 MB，暂不支持完整导出" }
+            require(bytes.size <= BackupCodec.MAX_BYTES) { "记录超过 16 MB，暂不支持完整导出" }
             withContext(Dispatchers.IO) {
                 val stream = app.contentResolver.openOutputStream(uri, "wt") ?: error("文件无法写入")
-                stream.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                stream.use { it.write(bytes) }
             }
             notice.value = "已导出；API 密钥不包含在文件中"
-        }
-        operationBusy.value = false
+        } } finally { operationBusy.value = false }
     }
 
     fun previewImport(uri: Uri) = viewModelScope.launch {
         if (operationBusy.value) return@launch
         operationBusy.value = true
-        safe {
+        try { safe {
             val bytes = withContext(Dispatchers.IO) {
                 val stream = app.contentResolver.openInputStream(uri) ?: error("文件无法读取")
                 stream.use {
@@ -300,20 +327,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     pack.copy(characters=pack.characters.map { it.copy(avatar=avatar) })
                 } else pack
             }
-        }
-        operationBusy.value = false
+        } } finally { operationBusy.value = false }
     }
 
     fun confirmImport() = viewModelScope.launch {
         val pack = pendingImport.value ?: return@launch
         if (operationBusy.value || sending.value) { notice.value = "请先停止生成，再导入记录"; return@launch }
         pendingImport.value = null; operationBusy.value = true
-        safe {
+        try { safe {
             mutations.withLock { pack.backup?.let { repository.restore(it) } ?: repository.importCommunity(pack) }
             notice.value = "已导入 ${pack.characterCount} 个角色、${pack.resourceCount} 份资料、${pack.sessionCount} 个会话" +
                 if(pack.backup?.connections?.isNotEmpty()==true) "；导入连接需重新填写密钥" else ""
-        }
-        operationBusy.value = false
+        } } finally { operationBusy.value = false }
     }
 
     suspend fun promptPreview(id: String): String {
@@ -326,7 +351,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveResource(asset: ResourceAsset, onSaved: ()->Unit) = viewModelScope.launch {
-        safe { asset.validate(); dao.saveResource(asset.copy(name=asset.name.trim(),updatedAt=System.currentTimeMillis())); onSaved(); notice.value="资料已保存" }
+        safe { withContext(Dispatchers.Default) { asset.validate() }; dao.saveResource(asset.copy(name=asset.name.trim(),updatedAt=System.currentTimeMillis())); onSaved(); notice.value="资料已保存" }
     }
     fun toggleResource(asset: ResourceAsset) = viewModelScope.launch { safe { dao.saveResource(asset.copy(enabled=!asset.enabled)) } }
     fun deleteResource(id: String) = viewModelScope.launch {
@@ -346,9 +371,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun exportAsset(uri: Uri, asset: ResourceAsset) = viewModelScope.launch {
         safe {
-            val text=buildJsonObject { put("format","roleplay.asset"); put("version",1); put("asset",appJson.encodeToJsonElement(asset)) }.toString()
+            val bytes=withContext(Dispatchers.Default) {
+                buildJsonObject { put("format","roleplay.asset"); put("version",1); put("asset",appJson.encodeToJsonElement(asset)) }.toString().toByteArray(Charsets.UTF_8)
+            }
             withContext(Dispatchers.IO) {
-                (app.contentResolver.openOutputStream(uri,"wt") ?: error("文件无法写入")).use { it.write(text.toByteArray()) }
+                (app.contentResolver.openOutputStream(uri,"wt") ?: error("文件无法写入")).use { it.write(bytes) }
             }
             notice.value="资料已导出"
         }
@@ -356,10 +383,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun exportCharacter(uri: Uri, card: CharacterCard) = viewModelScope.launch {
         safe {
-            val text=BackupCodec.encode(repository.exportCharacter(card))
-            require(text.toByteArray().size<=BackupCodec.MAX_BYTES) {"角色与关联资料超过 16 MB"}
+            val bundle=repository.exportCharacter(card)
+            val bytes=withContext(Dispatchers.Default) { BackupCodec.encode(bundle).toByteArray(Charsets.UTF_8) }
+            require(bytes.size<=BackupCodec.MAX_BYTES) {"角色与关联资料超过 16 MB"}
             withContext(Dispatchers.IO) {
-                (app.contentResolver.openOutputStream(uri,"wt") ?: error("文件无法写入")).use {it.write(text.toByteArray())}
+                (app.contentResolver.openOutputStream(uri,"wt") ?: error("文件无法写入")).use {it.write(bytes)}
             }
             notice.value="角色与关联资料已导出为本 App JSON，可重新导入"
         }

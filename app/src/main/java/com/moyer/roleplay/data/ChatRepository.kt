@@ -3,6 +3,8 @@ package com.moyer.roleplay.data
 import androidx.room.withTransaction
 import com.moyer.roleplay.core.*
 import kotlinx.serialization.encodeToString
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class ChatRepository(val database: AppDatabase) {
     val dao = database.dao()
@@ -40,8 +42,7 @@ class ChatRepository(val database: AppDatabase) {
     }
 
     suspend fun startTurn(sessionId: String, userText: String?): ChatMessage = database.withTransaction {
-        val history = dao.history(sessionId)
-        var position = (history.maxOfOrNull { it.position } ?: -1) + 1
+        var position = (dao.lastPosition(sessionId) ?: -1) + 1
         if (userText != null) dao.insertMessage(ChatMessage(sessionId = sessionId, role = "user", content = userText, position = position++))
         val reply = ChatMessage(sessionId = sessionId, role = "assistant", content = "", position = position, status = "streaming")
         dao.insertMessage(reply)
@@ -77,20 +78,19 @@ class ChatRepository(val database: AppDatabase) {
         require(sessionId == null || sessions.isNotEmpty()) { "会话不存在" }
         val characterIds = sessions.map { it.characterId }.toSet()
         val connectionIds = sessions.mapNotNull { it.connectionId }.toSet()
-        val selectedIds = sessions.map { it.id }.toSet()
         val cards = dao.allCharacters().filter { sessionId == null || it.id in characterIds }
         val needed = (cards.flatMap { readConfig(it.config).references() } + sessions.flatMap { readConfig(it.config).references() } +
             sessions.flatMap { readConfig(appJson.decodeFromString<CharacterCard>(it.characterSnapshot).config).references() }).toSet()
         BackupBundle(format = if (sessionId == null) "roleplay.backup" else "roleplay.chat",
             characters = cards,
             connections = dao.allConnections().filter { sessionId == null || it.id in connectionIds },
-            sessions = sessions, messages = dao.allMessages().filter { it.sessionId in selectedIds },
+            sessions = sessions, messages = if (sessionId == null) dao.allMessages() else dao.history(sessionId),
             resources = dao.allResources().filter { sessionId == null || it.id in needed },
             defaultsConfig = if(sessionId==null) dao.setting("defaults")?.value ?: "{}" else "{}")
     }
 
     suspend fun restore(bundle: BackupBundle) {
-        val mapped = BackupCodec.remap(bundle)
+        val mapped = withContext(Dispatchers.Default) { BackupCodec.remap(bundle) }
         database.withTransaction {
             mapped.resources.forEach { dao.saveResource(it) }
             mapped.characters.forEach { dao.saveCharacter(it) }

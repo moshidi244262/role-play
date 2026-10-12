@@ -59,6 +59,44 @@ class UiSmokeTest {
         compose.onNodeWithText("这是重开后保留的草稿").assertIsDisplayed()
     }
 
+    @Test fun invalidCharacterSaveKeepsEditorAndEnteredTextUntilSuccessfulSave() {
+        compose.onNode(hasText("角色") and hasClickAction()).performClick()
+        compose.onNodeWithContentDescription("新建角色").performClick()
+        val invalid = "名".repeat(201)
+        compose.onNodeWithText("角色名称").performTextInput(invalid)
+        compose.onNodeWithText("保存").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("角色设定").assertExists()
+        compose.onNodeWithText(invalid).assertExists()
+        compose.onNodeWithText("角色名称").performTextReplacement("保存校验测试")
+        compose.onNodeWithText("保存").performClick()
+        compose.waitUntil(10000) { compose.onAllNodesWithText("角色设定").fetchSemanticsNodes().isEmpty() }
+        compose.waitUntil(10000) { vm.characters.value.any { it.name == "保存校验测试" } }
+    }
+
+    @Test fun rapidDraftChangesKeepNewestTextInEachSessionAndDeletionClearsMemory() {
+        val repository = (compose.activity.application as RolePlayApplication).repository
+        val ids = kotlinx.coroutines.runBlocking {
+            val card = repository.dao.allCharacters().first()
+            listOf(repository.createSession(card, null), repository.createSession(card, null))
+        }
+        compose.runOnUiThread {
+            repeat(200) {
+                vm.saveDraft(ids[0], "第一会话 $it")
+                vm.saveDraft(ids[1], "第二会话 $it")
+            }
+            vm.saveDraft(ids[0], "")
+            vm.saveDraft(ids[1], "最后保留的草稿")
+        }
+        compose.waitUntil(10000) { vm.sessions.value.any { it.id == ids[1] && it.draft == "最后保留的草稿" } }
+        kotlinx.coroutines.runBlocking {
+            org.junit.Assert.assertEquals("", repository.dao.session(ids[0])!!.draft)
+            org.junit.Assert.assertEquals("最后保留的草稿", repository.dao.session(ids[1])!!.draft)
+        }
+        compose.runOnUiThread { ids.forEach { vm.deleteChat(it) } }
+        compose.waitUntil(10000) { ids.none { it in vm.drafts.value } }
+    }
+
     @Test fun connectionCanSaveWithoutFetchedModelAndShowsInlineKeyError() {
         compose.waitUntil(10000) {compose.onAllNodesWithContentDescription("返回").fetchSemanticsNodes().isNotEmpty() || compose.onAllNodesWithText("设置").fetchSemanticsNodes().isNotEmpty()}
         if(compose.onAllNodesWithContentDescription("返回").fetchSemanticsNodes().isNotEmpty()) compose.onNodeWithContentDescription("返回").performClick()

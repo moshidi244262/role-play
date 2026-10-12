@@ -18,6 +18,56 @@ import java.util.concurrent.TimeUnit
 class ApiClientTest {
     private val profile = ProviderTemplates.all[0].copy(model = "test-model")
 
+    @Test fun malformedStreamFieldsAreSanitizedAndNullErrorIsAccepted() {
+        val failure = runCatching {
+            ApiWire.parse(Protocol.CHAT_COMPLETIONS, """{"choices":"private-api-response"}""")
+        }.exceptionOrNull()
+        assertTrue(failure is ApiFailure)
+        assertFalse(failure!!.message!!.contains("private-api-response"))
+        assertEquals(listOf(ApiEvent.Text("你好")), ApiWire.parse(Protocol.CHAT_COMPLETIONS,
+            """{"error":null,"choices":[{"delta":{"content":"你好"}}]}"""))
+    }
+
+    @Test fun oversizedNetworkResponsesFailWithBoundedReads() = runBlocking {
+        val server = MockWebServer(); server.start()
+        try {
+            val configured = profile.copy(baseUrl = server.url("/v1").toString())
+            server.enqueue(MockResponse().setBody("data: " + "x".repeat(1024 * 1024 + 1)))
+            val streamError = runCatching {
+                ApiClient(true).stream(configured, "fake-test-key", listOf(PromptMessage("user", "test"))).toList()
+            }.exceptionOrNull()
+            assertTrue(streamError is ApiFailure)
+            assertTrue(streamError!!.message!!.contains("过大"))
+            server.enqueue(MockResponse().setBody("x".repeat(4 * 1024 * 1024 + 1)))
+            val modelsError = runCatching { ApiClient(true).models(configured, "fake-test-key") }.exceptionOrNull()
+            assertTrue(modelsError is ApiFailure)
+            assertTrue(modelsError!!.message!!.contains("过大"))
+        } finally { server.shutdown() }
+    }
+
+    @Test fun cancellingModelDiscoveryClosesBlockedSocket() = runBlocking {
+        val server = MockWebServer(); server.start()
+        try {
+            server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+            val job = launch {
+                ApiClient(true).models(profile.copy(baseUrl = server.url("/v1").toString()), "fake-test-key")
+            }
+            assertNotNull(kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { server.takeRequest(3, TimeUnit.SECONDS) })
+            val started = System.nanoTime()
+            job.cancelAndJoin()
+            assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 3000)
+        } finally { server.shutdown() }
+    }
+
+    @Test fun lastSseEventWithoutNewlineStillCompletes() = runBlocking {
+        val server = MockWebServer(); server.start()
+        try {
+            server.enqueue(MockResponse().setBody("data: {\"choices\":[{\"delta\":{\"content\":\"尾段\"}}]}\n\ndata: [DONE]"))
+            assertEquals(listOf(ApiEvent.Text("尾段"), ApiEvent.Done), ApiClient(true)
+                .stream(profile.copy(baseUrl = server.url("/v1").toString()), "fake-test-key", listOf(PromptMessage("user", "test"))).toList())
+        } finally { server.shutdown() }
+    }
+
     @Test fun endpointsDoNotDuplicateVersionAndRejectSecretInUrl() {
         assertEquals("/v1/chat/completions", ApiWire.endpoint(profile, "chat/completions").encodedPath)
         assertEquals("/v1/responses", ApiWire.endpoint(profile.copy(baseUrl = "https://api.openai.com/v1"), "responses").encodedPath)

@@ -13,6 +13,26 @@ import android.content.Context
 
 @RunWith(AndroidJUnit4::class)
 class PersistenceTest {
+    @Test fun singleChatExportIsIsolatedAndPositionsContinuePastGaps() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+        try {
+            val repository = ChatRepository(database)
+            val card = CharacterCard(name = "单会话导出")
+            repository.dao.saveCharacter(card)
+            val first = repository.createSession(card, null)
+            val second = repository.createSession(card, null)
+            repository.dao.insertMessage(ChatMessage(sessionId = first, role = "user", content = "原会话", position = 100))
+            repository.dao.insertMessage(ChatMessage(sessionId = second, role = "user", content = "其他会话", position = 900))
+            val reply = repository.startTurn(first, "继续")
+            assertEquals(102L, reply.position)
+            val backup = repository.export(first)
+            BackupCodec.validate(backup)
+            assertEquals(listOf(first), backup.sessions.map { it.id })
+            assertTrue(backup.messages.all { it.sessionId == first })
+            assertEquals(listOf("原会话", "继续", ""), backup.messages.map { it.content })
+        } finally { database.close() }
+    }
     @Test fun reopenDatabaseKeepsHistoryDraftAndRecoversInterruptedReply() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val name = "persistence-${newId()}.db"

@@ -36,6 +36,15 @@ class AppearanceUiTest {
         Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
     }
 
+    @Test fun repeatedAvatarUsesSameThumbnailAndDifferentImageStaysSeparate() {
+        val red = image(Color.RED); val blue = image(Color.BLUE)
+        val first = AvatarImages.decode(red)
+        assertNotNull(first)
+        assertSame(first, AvatarImages.decode(red))
+        assertNotSame(first, AvatarImages.decode(blue))
+        assertNull(AvatarImages.decode("invalid-avatar"))
+    }
+
     @Test fun sessionListShowsCurrentCustomImageThenRestoredCardAndSnapshotFallback() {
         val card = CharacterCard(name = "头像测试", avatar = image(Color.RED))
         val session = ChatSession(title = card.name, characterId = card.id, characterSnapshot = appJson.encodeToString(card))

@@ -7,13 +7,19 @@ import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
 import android.util.Base64
+import android.util.LruCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 
 internal object AvatarImages {
     private const val MAX_BYTES = 16 * 1024 * 1024
+    // Keys are short digests, so repeated session avatars do not retain duplicate Base64 strings.
+    private val thumbnails = object : LruCache<String, Bitmap>(4 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
+    }
 
     suspend fun fromGallery(context: Context, uri: Uri): String = withContext(Dispatchers.IO) {
         val bytes = (context.contentResolver.openInputStream(uri) ?: error("图片无法读取")).use { input ->
@@ -57,7 +63,13 @@ internal object AvatarImages {
 
     fun decode(encoded: String): Bitmap? = runCatching {
         if (encoded.isBlank() || encoded.length > 4 * 1024 * 1024) null
-        else decode(Base64.decode(encoded, Base64.DEFAULT), 128)
+        else {
+            val key = Base64.encodeToString(MessageDigest.getInstance("SHA-256").digest(encoded.toByteArray(Charsets.US_ASCII)), Base64.NO_WRAP)
+            synchronized(thumbnails) {
+                thumbnails.get(key)?.takeUnless { it.isRecycled }
+                    ?: decode(Base64.decode(encoded, Base64.DEFAULT), 128)?.also { thumbnails.put(key, it) }
+            }
+        }
     }.getOrNull()
 
     private fun decode(bytes: ByteArray, edge: Int): Bitmap? {

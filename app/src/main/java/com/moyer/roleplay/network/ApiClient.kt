@@ -11,6 +11,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
+import java.io.EOFException
 
 sealed interface ApiEvent {
     data class Text(val value: String) : ApiEvent
@@ -62,11 +63,16 @@ object ApiWire {
         }
     }
 
-    fun parse(protocol: Protocol, data: String): List<ApiEvent> {
+    fun parse(protocol: Protocol, data: String): List<ApiEvent> = try {
+        parseData(protocol, data)
+    } catch (error: ApiFailure) { throw error }
+    catch (_: Exception) { throw ApiFailure("服务商返回的流式数据格式不兼容，请检查 API 协议") }
+
+    private fun parseData(protocol: Protocol, data: String): List<ApiEvent> {
         if (data == "[DONE]") return listOf(ApiEvent.Done)
         val root = runCatching { appJson.parseToJsonElement(data).jsonObject }.getOrNull()
             ?: throw ApiFailure("服务商返回了无效的流式数据")
-        if (root["error"] != null || root["type"]?.jsonPrimitive?.content in setOf("error", "response.failed", "response.incomplete")) {
+        if (root["error"]?.takeUnless { it == JsonNull } != null || root["type"]?.jsonPrimitive?.content in setOf("error", "response.failed", "response.incomplete")) {
             throw ApiFailure("服务商中断了生成，请检查模型权限、额度或输出上限")
         }
         return buildList {
@@ -125,6 +131,8 @@ object ApiWire {
 }
 
 class ApiClient(private val allowInsecureLocalhost: Boolean = false) {
+    private val maxEventBytes = 1024L * 1024
+    private val maxModelsBytes = 4L * 1024 * 1024
     private val client = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(90, TimeUnit.SECONDS).callTimeout(300, TimeUnit.SECONDS)
         .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).build()
@@ -174,7 +182,11 @@ class ApiClient(private val allowInsecureLocalhost: Boolean = false) {
                     }
                     while (!complete) {
                         currentCoroutineContext().ensureActive()
-                        val line = source.readUtf8Line() ?: break
+                        val line = try { source.readUtf8LineStrict(maxEventBytes) }
+                        catch (_: EOFException) {
+                            if (source.buffer.size > maxEventBytes) throw ApiFailure("流式数据块过大")
+                            if (source.buffer.size > 0) source.readUtf8() else null
+                        } ?: break
                         if (line.isEmpty()) dispatch()
                         else if (line.startsWith("data:")) {
                             if (eventData.isNotEmpty()) eventData.append('\n')
@@ -206,9 +218,11 @@ class ApiClient(private val allowInsecureLocalhost: Boolean = false) {
             var url = builder.build().url
             if (cursor != null) url = url.newBuilder().addQueryParameter("after_id", cursor).build()
             val modelClient = client.newBuilder().callTimeout(timeout, TimeUnit.MILLISECONDS).readTimeout(timeout, TimeUnit.MILLISECONDS).build()
-            val root = modelClient.newCall(builder.url(url).get().build()).execute().use {
+            val root = modelClient.newCall(builder.url(url).get().build()).useCancellable {
                 if (!it.isSuccessful) throw ApiFailure(ApiWire.httpError(it.code))
-                val body = it.body?.string() ?: throw ApiFailure("服务商返回空模型列表")
+                val source = it.body?.source() ?: throw ApiFailure("服务商返回空模型列表")
+                if (source.request(maxModelsBytes + 1)) throw ApiFailure("服务商返回的模型列表过大，可以手动填写模型 ID")
+                val body = source.readUtf8()
                 try { appJson.parseToJsonElement(body).jsonObject }
                 catch (_: Exception) { throw ApiFailure("服务商返回的模型列表格式不兼容，可以手动填写模型 ID") }
             }
@@ -227,5 +241,17 @@ class ApiClient(private val allowInsecureLocalhost: Boolean = false) {
             } catch (_: Exception) { throw ApiFailure("服务商返回的模型列表格式或分页不兼容，可以手动填写模型 ID") }
         }
         throw ApiFailure("服务商返回的模型列表分页过多，请手动填写模型 ID")
+    }
+
+    private suspend fun <T> Call.useCancellable(block: suspend (Response) -> T): T = coroutineScope {
+        val call = this@useCancellable
+        val cancellation = launch(start = CoroutineStart.UNDISPATCHED) {
+            try { awaitCancellation() } finally { call.cancel() }
+        }
+        try { call.execute().use { block(it) } }
+        catch (error: java.io.IOException) {
+            currentCoroutineContext().ensureActive()
+            throw error
+        } finally { cancellation.cancel(); call.cancel() }
     }
 }

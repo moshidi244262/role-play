@@ -15,17 +15,26 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moyer.roleplay.core.*
+import com.moyer.roleplay.data.TextRule
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 @Composable
-internal fun MessageContent(text: String, messageId: String) {
-    var blocks by remember(messageId) { mutableStateOf(emptyList<MessageBlock>()) }
-    LaunchedEffect(text, messageId) {
-        blocks = withContext(Dispatchers.Default) { MessageMarkup.parse(text) }
+internal fun MessageContent(text: String, messageId: String, rules: List<TextRule> = emptyList(),
+    role: String = "assistant", depth: Int = 0, characterName: String = "", userName: String = "我", status: String = "complete") {
+    // Transform and parse together; a pending transform must not flash a false "hidden" message.
+    key(messageId) {
+    val blocks by produceState<List<MessageBlock>?>(null, text, rules, role, depth, characterName, userName, status) {
+        value = withContext(Dispatchers.Default) {
+            val shown = RegexEngine.apply(text, rules, role, true, depth, characterName, userName).text
+            MessageMarkup.parse(shown.ifEmpty {
+                if (status == "streaming") "正在回应…" else if (text.isNotEmpty()) "（内容已被显示规则隐藏）" else "未收到文字"
+            })
+        }
     }
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        MessageBlocks(blocks, messageId)
+        blocks?.let { MessageBlocks(it, messageId) }
+    }
     }
 }
 

@@ -57,6 +57,18 @@ class ReadingUiTest {
         compose.onNodeWithText("<details>",substring=true).assertDoesNotExist()
     }
 
+    @Test fun displayRuleRunsBeforeHtmlParsingAndLeavesRawContentUnchanged() {
+        val raw = "隐藏字<details><summary>状态</summary><p>真实内容</p></details>"
+        compose.setContent { MaterialTheme {
+            MessageContent(raw, "rule-markup", listOf(TextRule(pattern = "/隐藏字/g", replacement = "")))
+        } }
+        compose.waitUntil(5000) { compose.onAllNodesWithText("▸ 状态").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("隐藏字", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("▸ 状态").performClick()
+        compose.onNodeWithText("真实内容").assertIsDisplayed()
+        assertTrue(raw.startsWith("隐藏字"))
+    }
+
     @Test fun modelPickerSearchFindsAnotherModelInSameConnection() {
         var selected=""
         compose.setContent {MaterialTheme {ModelPicker("deepseek-flash",listOf("deepseek-flash","deepseek-v4-pro"),false,null,{}, {selected=it},{})}}

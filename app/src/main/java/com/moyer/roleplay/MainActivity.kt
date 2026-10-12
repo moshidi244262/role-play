@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -172,7 +173,7 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
             }
         }
         editCharacter?.let { CharacterEditor(it, resources, { editCharacter = null }) { card ->
-            vm.saveCharacter(card); editCharacter = null
+            vm.saveCharacter(card) { editCharacter = null }
         } }
         editConnection?.let { ConnectionEditor(it, vm, { editConnection = null }) }
         editingAsset?.let {asset->ResourceEditor(asset,{editingAsset=null}) {vm.saveResource(it) {editingAsset=null}}}
@@ -346,7 +347,7 @@ private fun SettingsScreen(connections: List<ConnectionProfile>, dark: Boolean, 
             HorizontalDivider()
             TextButton(onClick = onBackup) { Text("导出完整备份") }
             TextButton(onClick = onImport) { Text("导入备份 / 聊天记录") }
-            Text("Role Play 0.3.1 · 测试版\n聊天保存在设备本地。生成时，选中的聊天上下文会发送给你配置的 API 服务商。",
+            Text("Role Play ${BuildConfig.VERSION_NAME} · 测试版\n聊天保存在设备本地。生成时，选中的聊天上下文会发送给你配置的 API 服务商。",
                 color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(vertical = 16.dp))
         }
@@ -391,6 +392,7 @@ internal fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, conne
     val activeModel=activeConnection?.let {sessionProfile(it,config).model}.orEmpty()
     val characterName=remember(session.characterSnapshot) {appJson.decodeFromString<CharacterCard>(session.characterSnapshot).name}
     val rules=remember(config,resources) {PromptBuilder.rules(config,resources)}
+    val depthSensitive = remember(rules) { rules.any { it.display && (it.minDepth > 0 || it.maxDepth >= 0) } }
     LaunchedEffect(session.id, messages.size, messages.lastOrNull()?.content, followLatest) {
         // Layout snapshots may resume this effect while the lazy list is still being measured.
         withFrameNanos { }; kotlinx.coroutines.yield()
@@ -429,12 +431,9 @@ internal fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, conne
         Box(Modifier.weight(1f).fillMaxWidth()) {
         LazyColumn(state = scroll, modifier = Modifier.fillMaxSize().nestedScroll(readerScroll).testTag("chat-messages"),
             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            items(messages, key = { it.id }) { message ->
+            itemsIndexed(messages, key = { _, message -> message.id }) { index, message ->
                 val user = message.role == "user"
-                val depth=messages.lastIndex-messages.indexOf(message)
-                val shown by produceState(initialValue="",message.content,rules,depth,userName) {
-                    value=withContext(Dispatchers.Default) {RegexEngine.apply(message.content,rules,message.role,true,depth,characterName,userName).text}
-                }
+                val depth = if (depthSensitive) messages.lastIndex - index else 0
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = if (user) Alignment.End else Alignment.Start) {
                     Row(verticalAlignment=Alignment.CenterVertically) {
                         Text(if (user) userName else session.title, style = MaterialTheme.typography.labelSmall,
@@ -443,7 +442,7 @@ internal fun ChatScreen(session: ChatSession, messages: List<ChatMessage>, conne
                     }
                     Surface(shape = RoundedCornerShape(18.dp), color = if (user) MaterialTheme.colorScheme.primaryContainer
                         else MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.widthIn(max = 680.dp)) {
-                        MessageContent(shown.ifEmpty { if (message.status == "streaming") "正在回应…" else if(message.content.isNotEmpty()) "（内容已被显示规则隐藏）" else "未收到文字" }, message.id)
+                        MessageContent(message.content, message.id, rules, message.role, depth, characterName, userName, message.status)
                     }
                     if (message.status != "complete") Text(when (message.status) {
                         "streaming" -> "生成中 · 已收到的文字会自动保存"

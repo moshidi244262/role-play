@@ -31,6 +31,7 @@ interface RolePlayDao {
     @Query("SELECT * FROM connections WHERE id = :id") suspend fun connection(id: String): ConnectionProfile?
     @Query("SELECT COUNT(*) FROM characters") suspend fun characterCount(): Int
     @Query("SELECT COUNT(*) FROM messages WHERE sessionId = :id") suspend fun messageCount(id: String): Int
+    @Query("SELECT MAX(position) FROM messages WHERE sessionId = :id") suspend fun lastPosition(id: String): Long?
     @Upsert suspend fun saveCharacter(card: CharacterCard)
     @Upsert suspend fun saveConnection(profile: ConnectionProfile)
     @Insert suspend fun insertSession(session: ChatSession)
