@@ -39,6 +39,7 @@ class UiSmokeTest {
         compose.onNode(hasText("设置") and hasClickAction()).performClick()
         compose.onNodeWithTag("settings-help").performScrollTo().performClick()
         compose.onNodeWithTag("help-search").performTextInput("思维链")
+        compose.onNodeWithTag("help-search").performImeAction()
         screenshot("08-help-search")
         compose.onNodeWithTag("help-article-cot").performClick()
         screenshot("09-help-detail")
@@ -204,6 +205,8 @@ class UiSmokeTest {
     }
 
     private fun screenshot(name: String) {
+        compose.waitForIdle()
+        runCatching {InstrumentationRegistry.getInstrumentation().uiAutomation.waitForIdle(200,3000)}
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val folder = File(context.getExternalFilesDir(null), "screenshots").apply { mkdirs() }
         val bitmap=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()

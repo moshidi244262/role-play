@@ -291,6 +291,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun previewImport(uri: Uri, expectedKind: String? = null) = viewModelScope.launch {
         if (operationBusy.value) return@launch
         operationBusy.value = true
+        pendingImport.value = null
         try { safe {
             val bytes = withContext(Dispatchers.IO) {
                 val stream = app.contentResolver.openInputStream(uri) ?: error("文件无法读取")
@@ -309,7 +310,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val filename=withContext(Dispatchers.IO) {
                 app.contentResolver.query(uri,arrayOf(OpenableColumns.DISPLAY_NAME),null,null,null)?.use {
                     if(it.moveToFirst()) it.getString(0) else "导入资料"
-                } ?: "导入资料"
+                }?.takeIf { it.isNotBlank() } ?: uri.lastPathSegment?.substringAfterLast('/')?.substringAfter(':')?.takeIf { it.isNotBlank() } ?: "导入资料"
             }
             pendingImport.value = withContext(Dispatchers.Default) {
                 val pack=CommunityImporter.decode(bytes,filename,expectedKind)

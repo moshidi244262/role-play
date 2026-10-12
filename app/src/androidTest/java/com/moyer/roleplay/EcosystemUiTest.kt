@@ -49,7 +49,7 @@ class EcosystemUiTest {
         var saved: ResourceAsset?=null
         compose.setContent {MaterialTheme {ResourceEditor(asset,{}, {saved=it})}}
         compose.onNodeWithText("搜索条目或内容").performTextInput("块219")
-        compose.onNodeWithText("块219").performScrollTo().assertIsDisplayed()
+        compose.onNode(hasText("块219") and !hasSetTextAction()).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("块218").assertDoesNotExist()
         compose.onNodeWithText("搜索条目或内容").performTextClearance()
         compose.onNodeWithText("内嵌正则（1 条）").performScrollTo().performClick()

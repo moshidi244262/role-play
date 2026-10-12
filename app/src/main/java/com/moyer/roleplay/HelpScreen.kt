@@ -6,6 +6,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Close
@@ -16,12 +18,15 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.moyer.roleplay.core.HelpCatalog
 
 @Composable
 fun HelpScreen(onBack: () -> Unit) {
+    val focus=LocalFocusManager.current
     var query by rememberSaveable { mutableStateOf("") }
     var category by rememberSaveable { mutableStateOf<String?>(null) }
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
@@ -35,9 +40,10 @@ fun HelpScreen(onBack: () -> Unit) {
             Text(if(article==null) "帮助" else article.category,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold)
         }
         if(article==null) {
-            Text("了解酒馆资料，找到适合你的用法",color=MaterialTheme.colorScheme.onSurfaceVariant)
+            if(query.isBlank()) Text("了解酒馆资料，找到适合你的用法",color=MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedTextField(value=query,onValueChange={query=it},label={Text("搜索帮助")},
                 placeholder={Text("角色卡、世界书、思维链、导入…")},singleLine=true,
+                keyboardOptions=KeyboardOptions(imeAction=ImeAction.Search),keyboardActions=KeyboardActions(onSearch={focus.clearFocus()}),
                 leadingIcon={Icon(Icons.Outlined.Search,null)},trailingIcon={if(query.isNotEmpty()) IconButton(onClick={query=""}) {Icon(Icons.Outlined.Close,"清空帮助搜索")}},
                 modifier=Modifier.fillMaxWidth().padding(vertical=12.dp).testTag("help-search"))
             LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -50,7 +56,7 @@ fun HelpScreen(onBack: () -> Unit) {
                     Text("没有找到相关内容。试试更短的关键词，如“世界书”“变量”“空白”，或切换到“全部”。",modifier=Modifier.padding(vertical=24.dp))
                 }
                 items(results,key={it.id}) { value ->
-                    OutlinedCard(onClick={selected=value.id},modifier=Modifier.fillMaxWidth().testTag("help-article-${value.id}")) {
+                    OutlinedCard(onClick={focus.clearFocus();selected=value.id},modifier=Modifier.fillMaxWidth().testTag("help-article-${value.id}")) {
                         Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
                             Text(value.category,color=MaterialTheme.colorScheme.primary,style=MaterialTheme.typography.labelMedium)
                             Text(value.title,fontWeight=FontWeight.SemiBold)

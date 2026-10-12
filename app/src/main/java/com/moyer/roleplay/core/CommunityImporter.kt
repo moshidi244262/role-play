@@ -121,7 +121,7 @@ object CommunityImporter {
                 (p as? JsonPrimitive)?.contentOrNull?.takeIf { it in setOf("before_char","after_char","depth","before_examples","after_examples","before_author","after_author") } ?: if (p == null) "after_char" else "unsupported" }
             val advanced = listOf("sticky","cooldown","delay").any { e.int(it, ext.int(it)) != 0 } ||
                 e.string("group", ext.string("group")).isNotBlank() || e.bool("vectorized", ext.bool("vectorized")) ||
-                e.bool("delayUntilRecursion", ext.bool("delayUntilRecursion")) ||
+                e.bool("delayUntilRecursion", ext.bool("delayUntilRecursion")) || e.int("delayUntilRecursion", ext.int("delayUntilRecursion")) != 0 ||
                 ((e["triggers"] ?: ext["triggers"]) as? JsonArray)?.isNotEmpty() == true
             val primary=e.strings(if ("key" in e) "key" else "keys")
             val secondary=e.strings(if ("keysecondary" in e) "keysecondary" else "secondary_keys")

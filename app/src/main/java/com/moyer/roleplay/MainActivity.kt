@@ -142,7 +142,7 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
         fun returnToSessions() { tab = 0; vm.backToList() }
         BackHandler(enabled = selectedId != null) { returnToSessions() }
         Scaffold(snackbarHost = { SnackbarHost(snackbar) }, bottomBar = {
-            if (selectedId == null) NavigationBar {
+            if (selectedId == null && !(tab==3 && helpOpen)) NavigationBar {
                 navigation.forEachIndexed { index, item ->
                     NavigationBarItem(selected = tab == index, onClick = { tab = index; helpOpen=false },
                         icon = { Icon(item.icon, item.title) }, label = { Text(item.title) })

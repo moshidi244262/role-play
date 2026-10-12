@@ -47,13 +47,13 @@ object PromptBuilder {
             "lastUserMessage" to valid.lastOrNull { it.role == "user" }?.content.orEmpty(),
             "lastCharMessage" to valid.lastOrNull { it.role == "assistant" }?.content.orEmpty(),
             "lastMessage" to valid.lastOrNull()?.content.orEmpty(), "original" to ""),
-            (session.id + valid.joinToString { it.role + it.content }).hashCode())
+            31 * session.id.hashCode() + valid.takeLast(200).fold(1) { hash,message -> 31 * hash + message.content.hashCode() })
         fun basic(text: String) = text.replace("{{char}}",card.name).replace("{{user}}",user)
         fun transform(text: String, target: String, depth: Int) = RegexEngine.apply(text,rules,target,false,depth,card.name,user)
             .also { warnings += it.warnings }.text
         val style = selectedPreset(config, assets)
         val eligible: (PromptBlock) -> Boolean = { it.enabled && (it.triggers.isEmpty() || generationType in it.triggers || (generationType=="regenerate" && "swipe" in it.triggers)) }
-        val characterBlocks = assets.firstOrNull { it.id == config.characterPromptId && it.enabled && it.kind=="preset" }
+        val characterBlocks = assets.firstOrNull { it.id == config.characterPromptId && it.id != config.presetId && it.enabled && it.kind=="preset" }
             ?.let { appJson.decodeFromString<StylePreset>(it.payload).blocks.filter(eligible) }.orEmpty()
         val styleBlocks = style?.blocks?.filter(eligible).orEmpty()
         val lore = selectLore(config, assets, valid, card, user) { text -> transform(basic(text), "lore", 0) }
@@ -188,6 +188,7 @@ object PromptBuilder {
         val books = config.lorebookIds.mapNotNull { id -> assets.firstOrNull { it.id==id && it.kind=="lorebook" && it.enabled } }
             .map { it to appJson.decodeFromString<LoreBook>(it.payload) }
         val hits = mutableListOf<Hit>();val warnings = mutableListOf<String>();val seen=mutableSetOf<String>()
+        val historySeed=history.takeLast(100).fold(1) { hash,message -> 31 * hash + message.content.hashCode() }
         var total=0; val perBook=mutableMapOf<String,Int>();val deadline=System.nanoTime()+1_000_000_000
         fun matches(key: String,text: String,sensitive: Boolean,whole: Boolean): Boolean {
             val expanded=key.replace("{{char}}",charName).replace("{{user}}",userName)
@@ -221,7 +222,7 @@ object PromptBuilder {
                     "and_all"->secondary.all{it};"not_any"->secondary.none{it};"not_all"->!secondary.all{it};else->secondary.any{it}
                 }
                 if(primary && filter && entry.content.isNotBlank()) {
-                    val seed=(asset.id+entry.id+history.joinToString { it.content }).hashCode()
+                    val seed=31 * (asset.id+entry.id).hashCode()+historySeed
                     if(kotlin.random.Random(seed).nextInt(100) >= entry.probability) { seen+="${asset.id}:${entry.id}"; continue }
                     candidates += Hit(asset.id,asset.name,entry,transform(entry.content),
                     if(entry.constant) "常驻" else if(pass==0) "关键词" else "递归")
