@@ -127,7 +127,10 @@ fun RolePlayApp(vm: ChatViewModel = viewModel()) {
             jsonExporter.launch(if (id == null) "roleplay-backup.json" else "roleplay-chat.json")
         }
         fun exportText(id: String) { exportTarget = id; textExporter.launch("roleplay-chat.txt") }
-        LaunchedEffect(notice) { notice?.let { vm.clearNotice(); snackbar.showSnackbar(it) } }
+        LaunchedEffect(notice) { notice?.let {
+            snackbar.showSnackbar(it)
+            if (vm.notice.value == it) vm.clearNotice()
+        } }
         fun returnToSessions() { tab = 0; vm.backToList() }
         BackHandler(enabled = selectedId != null) { returnToSessions() }
         Scaffold(snackbarHost = { SnackbarHost(snackbar) }, bottomBar = {

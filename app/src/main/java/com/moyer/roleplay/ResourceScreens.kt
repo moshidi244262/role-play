@@ -143,8 +143,9 @@ fun ConfigEditor(initial: RoleplayConfig,assets: List<ResourceAsset>,title: Stri
 
 @Composable
 private fun NumberField(label: String,value: Int,onChange: (Int)->Unit) {
-    var text by remember(value) { mutableStateOf(value.toString()) }
-    Field(label,text,{text=it; it.toIntOrNull()?.let(onChange)},true)
+    var text by remember(label) { mutableStateOf(value.toString()) }
+    // An empty, non-numeric or overflowing edit must fail validation, not save the old value silently.
+    Field(label,text,{text=it; onChange(it.toIntOrNull() ?: -1)},true)
 }
 
 @Composable

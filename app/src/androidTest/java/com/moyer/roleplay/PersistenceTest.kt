@@ -13,6 +13,19 @@ import android.content.Context
 
 @RunWith(AndroidJUnit4::class)
 class PersistenceTest {
+    @Test fun invalidMergedDefaultsDoNotCreateUnopenableSession() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+        try {
+            val repository = ChatRepository(database)
+            repository.dao.saveSetting(StoredSetting("defaults", RoleplayConfig(regexIds = (1..32).map { "default-$it" }).json()))
+            val card = CharacterCard(name = "绑定上限", config = RoleplayConfig(regexIds = (1..32).map { "character-$it" }).json())
+            repository.dao.saveCharacter(card)
+            assertTrue(runCatching { repository.createSession(card, null) }.exceptionOrNull() is IllegalArgumentException)
+            assertTrue(repository.dao.allSessions().isEmpty())
+            assertTrue(repository.dao.allMessages().isEmpty())
+        } finally { database.close() }
+    }
     @Test fun singleChatExportIsIsolatedAndPositionsContinuePastGaps() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()

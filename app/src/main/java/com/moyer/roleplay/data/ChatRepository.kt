@@ -30,7 +30,7 @@ class ChatRepository(val database: AppDatabase) {
     }
 
     suspend fun createSession(card: CharacterCard, connectionId: String?, greeting: String? = null): String = database.withTransaction {
-        val config = configDefaults(readConfig(dao.setting("defaults")?.value ?: "{}"), readConfig(card.config))
+        val config = configDefaults(readConfig(dao.setting("defaults")?.value ?: "{}"), readConfig(card.config)).also { it.validate() }
         val session = ChatSession(title = card.name, characterId = card.id,
             characterSnapshot = appJson.encodeToString(card), connectionId = connectionId, config=config.json(),
             playerName=config.playerName.ifBlank { "我" })

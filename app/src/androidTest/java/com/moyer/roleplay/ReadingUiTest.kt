@@ -21,6 +21,19 @@ class ReadingUiTest {
     private val card=CharacterCard(name="阅读测试")
     private val session=ChatSession(title=card.name,characterId=card.id,characterSnapshot=appJson.encodeToString(card))
 
+    @Test fun invalidBudgetInputDoesNotSavePreviousValueSilently() {
+        var saved = false
+        compose.setContent { MaterialTheme { ConfigEditor(RoleplayConfig(), emptyList(), "数字校验", {}, { saved = true }) } }
+        compose.onNodeWithText("上下文与扫描选项").performScrollTo().performClick()
+        compose.onNodeWithText("上下文字符预算").performScrollTo().performTextReplacement("99999999999999999")
+        compose.onNodeWithText("保存").performClick()
+        assertFalse(saved)
+        compose.onNodeWithText("数字校验").assertExists()
+        compose.onNodeWithText("上下文字符预算").performScrollTo().performTextReplacement("24000")
+        compose.onNodeWithText("保存").performClick()
+        assertTrue(saved)
+    }
+
     @Test fun tallStreamingMessageDoesNotPullReaderDownAfterUpwardGesture() {
         val content=mutableStateOf((1..120).joinToString("\n") {"第 $it 行：这是逐步生成的长篇故事。"})
         compose.setContent { MaterialTheme {
