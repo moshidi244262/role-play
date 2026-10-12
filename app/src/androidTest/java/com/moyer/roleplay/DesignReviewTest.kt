@@ -2,11 +2,11 @@ package com.moyer.roleplay
 
 import android.graphics.Bitmap
 import androidx.compose.runtime.*
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import android.content.Context
 import com.moyer.roleplay.core.*
 import com.moyer.roleplay.data.*
@@ -26,7 +26,11 @@ class DesignReviewTest {
         compose.waitForIdle()
         val context=ApplicationProvider.getApplicationContext<Context>()
         val folder=File(context.getExternalFilesDir(null),"screenshots").apply {mkdirs()}
-        File(folder,name).outputStream().use {compose.onAllNodes(isRoot()).onLast().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG,100,it)}
+        // Capture the device window so native dialogs are included, rather than an activity root behind them.
+        val screenshot=requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+        try {
+            File(folder,name).outputStream().use {screenshot.compress(Bitmap.CompressFormat.PNG,100,it)}
+        } finally {screenshot.recycle()}
     }
 
     @Test fun latestStoryHasOneDirectContinueActionAndDeletionIsInMenu() {
@@ -73,6 +77,7 @@ class DesignReviewTest {
     @Test fun memoryEditorDefaultsDoNotOptIntoPaidAutomaticCalls() {
         var automatic=true;var compact=true
         compose.setContent {RolePlayTheme(false) {StoryMemoryEditor(session,emptyList(),false,null,{},{},{},{_,_,a,c,_->automatic=a;compact=c})}}
+        compose.onNodeWithText("剧情记忆").assertIsDisplayed()
         capture("24-redesign-memory.png")
         compose.onNodeWithText("固定记忆").performTextInput("约好明晚在西门见面。")
         compose.onNodeWithText("保存记忆").performClick()
